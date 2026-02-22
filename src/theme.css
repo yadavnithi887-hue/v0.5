@@ -1,0 +1,37 @@
+/* Theme utility classes - guaranteed to work regardless of Tailwind config */
+
+.ide-bg {
+    background-color: var(--ide-bg) !important;
+}
+
+.ide-sidebar {
+    background-color: var(--ide-sidebar) !important;
+}
+
+.ide-activitybar {
+    background-color: var(--ide-activitybar) !important;
+}
+
+.ide-border {
+    border-color: var(--ide-border) !important;
+}
+
+.ide-fg {
+    color: var(--ide-fg) !important;
+}
+
+.ide-fg-secondary {
+    color: var(--ide-fg-secondary) !important;
+}
+
+.ide-accent {
+    background-color: var(--ide-accent) !important;
+}
+
+.ide-accent-text {
+    color: var(--ide-accent) !important;
+}
+
+.ide-accent-border {
+    border-color: var(--ide-accent) !important;
+}
