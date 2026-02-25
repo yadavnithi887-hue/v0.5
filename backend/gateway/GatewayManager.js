@@ -21,9 +21,10 @@ class GatewayManager {
         this.active = false;
         this.workspacePath = null;
         this.messageQueues = new Map(); // chatId -> promise chain (serial processing)
+        this.activeSessionByChat = new Map(); // chatId -> sessionId
 
-        // Ensure default model is Antigravity
-        this.aiBrain.setModel('google-antigravity/gemini-3-flash');
+        // Ensure default model is valid for current API endpoint
+        this.aiBrain.setModel('gemini-3-flash');
 
         // Register handlers
         this.telegramClient.onMessage(this._handleMessage.bind(this));
@@ -120,6 +121,7 @@ class GatewayManager {
      */
     async _processMessage(msg) {
         const chatId = msg.chatId;
+        const sessionId = this.activeSessionByChat.get(String(chatId)) || String(chatId);
 
         try {
             // Show typing indicator
@@ -133,11 +135,14 @@ class GatewayManager {
             });
 
             // Get or create session
-            const session = await this.sessionManager.getSession(chatId);
+            const session = await this.sessionManager.getSession(sessionId);
 
             // Build context from memory
-            const context = await this.sessionManager.buildContext(chatId);
+            const context = await this.sessionManager.buildContext(sessionId);
             context.workspacePath = this.workspacePath;
+            if (this.toolRouter && typeof this.toolRouter.setSessionId === 'function') {
+                this.toolRouter.setSessionId(sessionId);
+            }
 
             // Send to AI Brain
             this._emitActivity('ai_thinking', { chatId, message: msg.text });
@@ -159,12 +164,13 @@ class GatewayManager {
             await this.telegramClient.sendMessage(chatId, telegramResponse);
 
             // Save to session memory
-            await this.sessionManager.addMessage(chatId, 'user', msg.text);
-            await this.sessionManager.addMessage(chatId, 'assistant', result.response);
+            await this.sessionManager.addMessage(sessionId, 'user', msg.text);
+            await this.sessionManager.addMessage(sessionId, 'assistant', result.response);
 
             // Emit completion to IDE
             this._emitActivity('response_sent', {
                 chatId,
+                sessionId,
                 toolCalls: result.toolCalls.length,
                 tokens: result.tokensUsed,
                 iterations: result.iterations
@@ -181,6 +187,7 @@ class GatewayManager {
             // Emit error to IDE
             this._emitActivity('error', {
                 chatId,
+                sessionId,
                 error: err.message
             });
         }
@@ -205,10 +212,12 @@ class GatewayManager {
 
             case 'status': {
                 const status = this.getStatus();
-                const sessionMsgCount = (await this.sessionManager.getSession(chatId))?.messages?.length || 0;
+                const sessionId = this.activeSessionByChat.get(String(chatId)) || String(chatId);
+                const sessionMsgCount = (await this.sessionManager.getSession(sessionId))?.messages?.length || 0;
                 const statusMsg = this.messageParser.formatStatus({
                     ...status,
                     gatewayActive: this.active,
+                    sessionId,
                     sessionMessages: sessionMsgCount
                 });
                 await this.telegramClient.sendMessage(chatId, statusMsg);
@@ -222,14 +231,33 @@ class GatewayManager {
                 break;
 
             case 'clear':
-            case 'newsession':
-            case 'reset':
-                await this.sessionManager.clearSession(chatId);
+            case 'reset': {
+                const sessionId = this.activeSessionByChat.get(String(chatId)) || String(chatId);
+                await this.sessionManager.clearSession(sessionId);
                 await this.telegramClient.sendMessage(chatId,
                     '🧹 *Session Reset!* \nMemory cleared. I\'m ready for a fresh start.'
                 );
-                this._emitActivity('session_cleared', { chatId });
+                this._emitActivity('session_cleared', { chatId, sessionId });
                 break;
+            }
+
+            case 'newsession': {
+                const previousSessionId = this.activeSessionByChat.get(String(chatId)) || String(chatId);
+                const newSessionId = `${chatId}-${Date.now()}`;
+                this.activeSessionByChat.set(String(chatId), newSessionId);
+
+                await this.sessionManager.createSession(newSessionId, {
+                    source: 'telegram',
+                    parentChatId: String(chatId),
+                    previousSessionId
+                });
+
+                await this.telegramClient.sendMessage(chatId,
+                    `🆕 *New Session Created!*\n\nSession ID: \`${newSessionId}\`\nOld session remains saved separately.`
+                );
+                this._emitActivity('session_created', { chatId, sessionId: newSessionId, previousSessionId });
+                break;
+            }
 
             case 'help':
                 await this.telegramClient.sendMessage(chatId,

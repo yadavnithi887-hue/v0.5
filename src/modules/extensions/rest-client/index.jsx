@@ -194,5 +194,5 @@ export const activate = (context) => {
         (props) => <RestPanel context={context} {...props} />
     );
 
-    console.log("REST Client Activated");
+    // console.log("REST Client Activated");
 };

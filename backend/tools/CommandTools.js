@@ -9,6 +9,39 @@ class CommandTools {
         this.runningCommands = new Map();
         this.currentAiTerminalId = null; // Track current AI terminal for reuse
         this.currentAiTerminalDone = true; // Is the current terminal's command done?
+        this.workspacePath = null;
+    }
+
+    setWorkspacePath(workspacePath) {
+        this.workspacePath = workspacePath ? String(workspacePath) : null;
+    }
+
+    _normalizePath(p) {
+        return String(p || '').replace(/\\/g, '/').toLowerCase();
+    }
+
+    _resolveCwd(cwd) {
+        const safeBase = this.workspacePath || cwd || process.cwd();
+        if (!cwd) return safeBase;
+        if (!this.workspacePath) return cwd;
+
+        const base = this._normalizePath(this.workspacePath);
+        const target = this._normalizePath(cwd);
+        if (target.startsWith(base)) return cwd;
+        return safeBase;
+    }
+
+    _isBackendDangerousCommand(commandLine) {
+        const cmd = String(commandLine || '').toLowerCase();
+        const patterns = [
+            /taskkill\s+\/f\s+\/im\s+node\.exe/,
+            /taskkill\s+\/im\s+node\.exe/,
+            /stop-process\s+-name\s+node\b/,
+            /pkill\s+(-f\s+)?node\b/,
+            /killall\s+node\b/,
+            /wmic\s+process\s+where\s+.*node\.exe.*delete/,
+        ];
+        return patterns.some((re) => re.test(cmd));
     }
 
     /**
@@ -23,6 +56,13 @@ class CommandTools {
     // 10. run_command
     async runCommand({ CommandLine, Cwd, WaitMsBeforeAsync }) {
         const id = randomUUID();
+        if (!CommandLine || String(CommandLine).trim().length === 0) {
+            throw new Error('CommandLine is required for run_command.');
+        }
+        if (this._isBackendDangerousCommand(CommandLine)) {
+            throw new Error('Blocked command: this command can terminate IDE/backend Node processes.');
+        }
+        const effectiveCwd = this._resolveCwd(Cwd);
 
         let childProcess;
         let output = [];
@@ -42,18 +82,18 @@ class CommandTools {
         this.currentAiTerminalDone = false;
 
         try {
-            console.log(`[COMMAND] Starting [${id}]: ${CommandLine} in ${Cwd}`);
+            console.log(`[COMMAND] Starting [${id}]: ${CommandLine} in ${effectiveCwd}`);
 
             // Notify frontend: new AI command started
             this._emitTerminal('start', {
                 commandId: id,
                 command: CommandLine,
-                cwd: Cwd,
+                cwd: effectiveCwd,
                 newTerminal: createNewTerminal
             });
 
             // Execute command
-            childProcess = exec(CommandLine, { cwd: Cwd, maxBuffer: 1024 * 1024 * 10 });
+            childProcess = exec(CommandLine, { cwd: effectiveCwd, maxBuffer: 1024 * 1024 * 10 });
 
             // Store command state
             this.runningCommands.set(id, {

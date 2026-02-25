@@ -9,73 +9,73 @@ import tsWorker from 'monaco-editor/esm/vs/language/typescript/ts.worker?worker'
 
 // 🔥 Use window instead of self for browser context
 window.MonacoEnvironment = {
-    getWorker(workerId, label) {
-        console.log('🔧 Monaco requesting worker for:', label);
+  getWorker(workerId, label) {
+    // console.log('🔧 Monaco requesting worker for:', label);
 
-        if (label === 'json') {
-            return new jsonWorker();
-        }
-        if (label === 'css' || label === 'scss' || label === 'less') {
-            return new cssWorker();
-        }
-        if (label === 'html' || label === 'handlebars' || label === 'razor') {
-            return new htmlWorker();
-        }
-        if (label === 'typescript' || label === 'javascript') {
-            return new tsWorker();
-        }
-        return new editorWorker();
-    },
+    if (label === 'json') {
+      return new jsonWorker();
+    }
+    if (label === 'css' || label === 'scss' || label === 'less') {
+      return new cssWorker();
+    }
+    if (label === 'html' || label === 'handlebars' || label === 'razor') {
+      return new htmlWorker();
+    }
+    if (label === 'typescript' || label === 'javascript') {
+      return new tsWorker();
+    }
+    return new editorWorker();
+  },
 };
 
-console.log('✅ Monaco Worker Environment configured:', window.MonacoEnvironment);
+// console.log('✅ Monaco Worker Environment configured:', window.MonacoEnvironment);
 
 // 🔥 Configure TypeScript/JavaScript IntelliSense
 import * as monaco from 'monaco-editor';
 
 // Wait for Monaco to be ready, then configure TypeScript
 const configureTypeScript = () => {
-    const ts = monaco.languages.typescript;
+  const ts = monaco.languages.typescript;
 
-    // ✅ JavaScript Configuration
-    ts.javascriptDefaults.setDiagnosticsOptions({
-        noSemanticValidation: false,
-        noSyntaxValidation: false,
-    });
+  // ✅ JavaScript Configuration
+  ts.javascriptDefaults.setDiagnosticsOptions({
+    noSemanticValidation: false,
+    noSyntaxValidation: false,
+  });
 
-    ts.javascriptDefaults.setCompilerOptions({
-        target: ts.ScriptTarget.ESNext,
-        module: ts.ModuleKind.ESNext,
-        moduleResolution: ts.ModuleResolutionKind.NodeJs,
-        allowNonTsExtensions: true,
-        allowJs: true,
-        checkJs: true,
-        jsx: ts.JsxEmit.React,
-        jsxFactory: 'React.createElement',
-        allowSyntheticDefaultImports: true,
-        esModuleInterop: true,
-    });
+  ts.javascriptDefaults.setCompilerOptions({
+    target: ts.ScriptTarget.ESNext,
+    module: ts.ModuleKind.ESNext,
+    moduleResolution: ts.ModuleResolutionKind.NodeJs,
+    allowNonTsExtensions: true,
+    allowJs: true,
+    checkJs: true,
+    jsx: ts.JsxEmit.React,
+    jsxFactory: 'React.createElement',
+    allowSyntheticDefaultImports: true,
+    esModuleInterop: true,
+  });
 
-    // ✅ TypeScript Configuration
-    ts.typescriptDefaults.setDiagnosticsOptions({
-        noSemanticValidation: false,
-        noSyntaxValidation: false,
-    });
+  // ✅ TypeScript Configuration
+  ts.typescriptDefaults.setDiagnosticsOptions({
+    noSemanticValidation: false,
+    noSyntaxValidation: false,
+  });
 
-    ts.typescriptDefaults.setCompilerOptions({
-        target: ts.ScriptTarget.ESNext,
-        module: ts.ModuleKind.ESNext,
-        moduleResolution: ts.ModuleResolutionKind.NodeJs,
-        allowNonTsExtensions: true,
-        jsx: ts.JsxEmit.React,
-        jsxFactory: 'React.createElement',
-        allowSyntheticDefaultImports: true,
-        esModuleInterop: true,
-        strict: true,
-    });
+  ts.typescriptDefaults.setCompilerOptions({
+    target: ts.ScriptTarget.ESNext,
+    module: ts.ModuleKind.ESNext,
+    moduleResolution: ts.ModuleResolutionKind.NodeJs,
+    allowNonTsExtensions: true,
+    jsx: ts.JsxEmit.React,
+    jsxFactory: 'React.createElement',
+    allowSyntheticDefaultImports: true,
+    esModuleInterop: true,
+    strict: true,
+  });
 
-    // ✅ Add React Type Definitions for JSX IntelliSense
-    const reactTypes = `
+  // ✅ Add React Type Definitions for JSX IntelliSense
+  const reactTypes = `
     declare namespace React {
       function createElement(type: any, props?: any, ...children: any[]): any;
       function useState<T>(initialState: T | (() => T)): [T, (value: T | ((prev: T) => T)) => void];
@@ -92,8 +92,8 @@ const configureTypeScript = () => {
     declare const React: typeof React;
   `;
 
-    // ✅ Add Console/DOM type definitions
-    const globalTypes = `
+  // ✅ Add Console/DOM type definitions
+  const globalTypes = `
     interface Console {
       log(...args: any[]): void;
       error(...args: any[]): void;
@@ -144,17 +144,17 @@ const configureTypeScript = () => {
     }
   `;
 
-    // Add type definitions to both JS and TS
-    ts.javascriptDefaults.addExtraLib(reactTypes, 'react.d.ts');
-    ts.javascriptDefaults.addExtraLib(globalTypes, 'globals.d.ts');
-    ts.typescriptDefaults.addExtraLib(reactTypes, 'react.d.ts');
-    ts.typescriptDefaults.addExtraLib(globalTypes, 'globals.d.ts');
+  // Add type definitions to both JS and TS
+  ts.javascriptDefaults.addExtraLib(reactTypes, 'react.d.ts');
+  ts.javascriptDefaults.addExtraLib(globalTypes, 'globals.d.ts');
+  ts.typescriptDefaults.addExtraLib(reactTypes, 'react.d.ts');
+  ts.typescriptDefaults.addExtraLib(globalTypes, 'globals.d.ts');
 
-    // ✅ Enable eager model sync for better IntelliSense
-    ts.javascriptDefaults.setEagerModelSync(true);
-    ts.typescriptDefaults.setEagerModelSync(true);
+  // ✅ Enable eager model sync for better IntelliSense
+  ts.javascriptDefaults.setEagerModelSync(true);
+  ts.typescriptDefaults.setEagerModelSync(true);
 
-    console.log('✅ TypeScript/JavaScript IntelliSense configured!');
+  // console.log('✅ TypeScript/JavaScript IntelliSense configured!');
 };
 
 // Run configuration

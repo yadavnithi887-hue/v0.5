@@ -71,11 +71,58 @@ app.get('/api/auth/status', (req, res) => {
     res.json(tokenManager.getAuthStatus());
 });
 
+// List saved OAuth profiles
+app.get('/api/auth/profiles', (req, res) => {
+    try {
+        const provider = req.query.provider ? String(req.query.provider) : null;
+        res.json(tokenManager.getAuthProfiles(provider));
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Switch active OAuth profile
+app.post('/api/auth/use-profile', (req, res) => {
+    try {
+        const profileKey = String(req.body?.profileKey || '').trim();
+        if (!profileKey) {
+            return res.status(400).json({ error: 'profileKey is required' });
+        }
+        const status = tokenManager.useAuthProfile(profileKey);
+        res.json({ success: true, status });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// Get saved OAuth client config (secret masked)
+app.get('/api/auth/config', (req, res) => {
+    const appConfig = tokenManager.getAppConfig();
+    res.json({
+        clientId: appConfig.clientId || '',
+        hasClientSecret: !!appConfig.clientSecret,
+    });
+});
+
+// Save OAuth client config
+app.post('/api/auth/config', (req, res) => {
+    try {
+        const { clientId, clientSecret } = req.body || {};
+        tokenManager.saveAppConfig({
+            ...(clientId ? { clientId } : {}),
+            ...(clientSecret ? { clientSecret } : {}),
+        });
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
 // Start OAuth flow
 app.post('/api/auth/start', async (req, res) => {
     try {
         const { clientId, clientSecret } = req.body;
-        // clientId and clientSecret are optional - GoogleOAuth will use default if not provided
+        // clientId/clientSecret are optional; missing values are loaded from saved config or env
         const { authURL, port } = await googleOAuth.startAuthFlow(clientId, clientSecret);
         res.json({ authURL, port, message: 'Open the URL in your browser to sign in' });
     } catch (err) {
@@ -184,6 +231,38 @@ app.post('/api/sessions/:chatId/clear', async (req, res) => {
     res.json({ success: true, message: 'Session cleared' });
 });
 
+// --- Artifact Routes (session scoped, hidden local storage) ---
+app.get('/api/artifacts/:chatId', async (req, res) => {
+    try {
+        const chatId = String(req.params.chatId || '').trim();
+        if (!chatId) return res.status(400).json({ error: 'chatId is required' });
+        if (toolRouter && typeof toolRouter.setSessionId === 'function') {
+            toolRouter.setSessionId(chatId);
+        }
+        const items = await toolRouter.execute('brain_list_artifacts', {});
+        res.json({ success: true, chatId, items });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+app.get('/api/artifacts/:chatId/:artifactName', async (req, res) => {
+    try {
+        const chatId = String(req.params.chatId || '').trim();
+        const artifactName = String(req.params.artifactName || '').trim();
+        if (!chatId || !artifactName) {
+            return res.status(400).json({ error: 'chatId and artifactName are required' });
+        }
+        if (toolRouter && typeof toolRouter.setSessionId === 'function') {
+            toolRouter.setSessionId(chatId);
+        }
+        const content = await toolRouter.execute('brain_read_artifact', { ArtifactName: artifactName });
+        res.json({ success: true, chatId, artifactName, content });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
 // --- Config Route (for debugging) ---
 app.get('/api/config', (req, res) => {
     res.json(tokenManager.getFullConfig());
@@ -207,7 +286,7 @@ io.on('connection', (socket) => {
     // --- NEW: Auth events ---
     socket.on('auth:start', async (data) => {
         try {
-            const { authURL, port } = await googleOAuth.startAuthFlow(data.clientId);
+            const { authURL, port } = await googleOAuth.startAuthFlow(data.clientId, data.clientSecret);
             socket.emit('auth:url', { authURL, port });
         } catch (err) {
             socket.emit('auth:error', { error: err.message });
@@ -251,6 +330,75 @@ io.on('connection', (socket) => {
 
     socket.on('gateway:status', () => {
         socket.emit('gateway:status', gatewayManager.getStatus());
+    });
+
+    // --- NEW: Explicit IDE session creation (for empty new chat) ---
+    socket.on('ide:new-session', async (data) => {
+        try {
+            const chatId = String(data?.chatId || '').trim();
+            if (!chatId) {
+                socket.emit('ide:new-session-result', { success: false, error: 'chatId is required' });
+                return;
+            }
+
+            await sessionManager.createSession(chatId, {
+                source: 'ide',
+                workspacePath: data?.workspacePath || process.cwd(),
+            });
+
+            socket.emit('ide:new-session-result', { success: true, chatId });
+        } catch (err) {
+            socket.emit('ide:new-session-result', { success: false, error: err.message });
+        }
+    });
+
+    // --- NEW: Direct IDE Chat (No Telegram required) ---
+    socket.on('ide:chat', async (data) => {
+        try {
+            const { message, workspacePath, chatId: incomingChatId } = data || {};
+            const chatId = incomingChatId || 'ide-local-session';
+
+            // Get or create session
+            const session = await sessionManager.getSession(chatId);
+            const context = await sessionManager.buildContext(chatId);
+            const wp = workspacePath || process.cwd();
+            context.workspacePath = wp;
+
+            // Set workspace path for tools BEFORE thinking
+            if (toolRouter && typeof toolRouter.setWorkspacePath === 'function') {
+                toolRouter.setWorkspacePath(wp);
+            }
+            if (toolRouter && typeof toolRouter.setSessionId === 'function') {
+                toolRouter.setSessionId(chatId);
+            }
+
+            // Save user message to memory
+            await sessionManager.addMessage(chatId, 'user', message);
+
+            // Think and stream
+            const result = await aiBrain.think(message, context);
+
+            // Save AI response to memory
+            await sessionManager.addMessage(chatId, 'assistant', result.response);
+
+            socket.emit('ide:chat-complete', {
+                success: true,
+                toolCalls: result.toolCalls.length,
+                tokens: result.tokensUsed
+            });
+
+        } catch (err) {
+            socket.emit('ide:chat-error', {
+                error: err?.message || 'Unknown AI error',
+                code: err?.code || 'AI_ERROR',
+                stage: err?.stage || 'unknown',
+                status: err?.status || null,
+                retryable: typeof err?.retryable === 'boolean' ? err.retryable : null,
+                details: err?.details || null,
+                iteration: err?.iteration || null,
+                toolFailures: err?.toolFailures || [],
+            });
+        }
     });
 
     // --- Disconnection ---

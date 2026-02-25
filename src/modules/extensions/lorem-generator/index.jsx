@@ -111,5 +111,5 @@ export const activate = (context) => {
         (props) => <LoremPanel context={context} {...props} />
     );
 
-    console.log("Lorem Generator Activated");
+    // console.log("Lorem Generator Activated");
 };

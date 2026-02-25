@@ -1,6 +1,6 @@
 // backend/auth/GoogleOAuth.js
 // Google OAuth 2.0 PKCE flow for Gemini API access
-// No external SDK — raw HTTP with fetch
+// No external SDK - raw HTTP with fetch
 
 import http from 'http';
 import crypto from 'crypto';
@@ -30,32 +30,48 @@ class GoogleOAuth {
     }
 
     generatePKCE() {
-        const codeVerifier = crypto.randomBytes(32).toString('base64')
-            .replace(/\+/g, '-')
-            .replace(/\//g, '_')
-            .replace(/=/g, '');
-
+        const verifier = crypto.randomBytes(32).toString('hex');
         const codeChallenge = crypto.createHash('sha256')
-            .update(codeVerifier)
-            .digest('base64')
-            .replace(/\+/g, '-')
-            .replace(/\//g, '_')
-            .replace(/=/g, '');
+            .update(verifier)
+            .digest('base64url');
 
-        return { codeVerifier, codeChallenge };
+        return { codeVerifier: verifier, codeChallenge };
     }
 
-    buildAuthURL(port, codeChallenge, clientId) {
+    _resolveOAuthConfig(clientId, clientSecret) {
+        const appConfig = this.tokenManager.getAppConfig?.() || {};
+        const resolvedClientId = (clientId || appConfig.clientId || process.env.GOOGLE_OAUTH_CLIENT_ID || '').trim();
+        const resolvedClientSecret = (clientSecret || appConfig.clientSecret || process.env.GOOGLE_OAUTH_CLIENT_SECRET || '').trim();
+
+        if (!resolvedClientId) {
+            throw new Error(
+                'Google OAuth Client ID missing. Set it in DevStudio Settings > Auth Config or env GOOGLE_OAUTH_CLIENT_ID.'
+            );
+        }
+
+        return { clientId: resolvedClientId, clientSecret: resolvedClientSecret };
+    }
+
+    buildAuthURL(port, codeChallenge, verifier, clientId) {
         const params = new URLSearchParams({
             client_id: clientId,
-            redirect_uri: `http://localhost:${port}/oauth-callback`,
             response_type: 'code',
-            scope: this.SCOPES.join(' '),
+            redirect_uri: `http://localhost:${port}/oauth-callback`,
+            scope: [
+                'https://www.googleapis.com/auth/cloud-platform',
+                'https://www.googleapis.com/auth/userinfo.email',
+                'https://www.googleapis.com/auth/userinfo.profile',
+                'https://www.googleapis.com/auth/cclog',
+                'https://www.googleapis.com/auth/experimentsandconfigs',
+                'openid',
+                'email',
+                'profile'
+            ].join(' '),
             code_challenge: codeChallenge,
             code_challenge_method: 'S256',
+            state: verifier,
             access_type: 'offline',
-            prompt: 'consent',
-            state: crypto.randomBytes(16).toString('hex')
+            prompt: 'consent'
         });
         return `${this.AUTH_ENDPOINT}?${params.toString()}`;
     }
@@ -63,22 +79,34 @@ class GoogleOAuth {
     async exchangeCode(code, codeVerifier, port, clientId, clientSecret) {
         const params = new URLSearchParams({
             client_id: clientId,
-            client_secret: clientSecret,
-            code: code,
+            code,
             grant_type: 'authorization_code',
             redirect_uri: `http://localhost:${port}/oauth-callback`,
             code_verifier: codeVerifier
         });
 
+        if (clientSecret) {
+            params.set('client_secret', clientSecret);
+        }
+
         const response = await fetch(this.TOKEN_ENDPOINT, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'User-Agent': 'google-api-nodejs-client/9.15.1'
+            },
             body: params.toString()
         });
 
         if (!response.ok) {
-            const error = await response.json().catch(() => ({}));
-            throw new Error(error.error_description || 'Failed to exchange code for tokens');
+            const raw = await response.text();
+            console.error('[AUTH] Token exchange failed:', raw);
+            let errorMsg = 'Failed to exchange code for tokens';
+            try {
+                const parsed = JSON.parse(raw);
+                errorMsg = parsed.error_description || parsed.error || errorMsg;
+            } catch (e) {}
+            throw new Error(errorMsg);
         }
         return await response.json();
     }
@@ -98,26 +126,31 @@ class GoogleOAuth {
         // PORT 51121 IS MANDATORY FOR ANTIGRAVITY CLIENT ID
         const port = 51121;
 
-        const appConfig = this.tokenManager.getAppConfig();
-        const effectiveClientId = clientId || appConfig.clientId || process.env.GOOGLE_CLIENT_ID;
-        const effectiveSecret = clientSecret || appConfig.clientSecret || process.env.GOOGLE_CLIENT_SECRET;
+        const resolvedOAuth = this._resolveOAuthConfig(clientId, clientSecret);
 
-        if (!effectiveClientId || !effectiveSecret) {
-            console.error('[AUTH] Missing Google OAuth credentials.');
-            throw new Error('Google OAuth Client ID and Secret are required. Please set them in your ~/.vsdev/config.json file.');
-        }
+        // Persist credentials in app config
+        this.tokenManager.saveAppConfig({
+            clientId: resolvedOAuth.clientId,
+            ...(resolvedOAuth.clientSecret ? { clientSecret: resolvedOAuth.clientSecret } : {}),
+        });
 
-        this.pendingAuth = { codeVerifier, clientId: effectiveClientId, clientSecret: effectiveSecret, port };
+        this.pendingAuth = {
+            codeVerifier,
+            clientId: resolvedOAuth.clientId,
+            clientSecret: resolvedOAuth.clientSecret,
+            port
+        };
 
-        await this._startCallbackServer(port, effectiveClientId);
-        const authURL = this.buildAuthURL(port, codeChallenge, effectiveClientId);
+        await this._startCallbackServer(port, resolvedOAuth.clientId);
+        const authURL = this.buildAuthURL(port, codeChallenge, codeVerifier, resolvedOAuth.clientId);
 
-        // Open the URL automatically in the default browser (Chrome)
-        console.log(`[AUTH] Opening Browser for Authentication...`);
+        // Open the URL automatically in the default browser
+        console.log('[AUTH] Opening Browser for Authentication...');
         const openCmd = process.platform === 'win32' ? `start "" "${authURL}"` :
             (process.platform === 'darwin' ? `open "${authURL}"` : `xdg-open "${authURL}"`);
+
         exec(openCmd, (err) => {
-            if (err) console.error(`[AUTH] Failed to open browser automatically:`, err.message);
+            if (err) console.error('[AUTH] Failed to open browser automatically:', err.message);
         });
 
         if (this.io) this.io.emit('auth:flow-started', { port, authURL });
@@ -131,7 +164,8 @@ class GoogleOAuth {
                 if (url.pathname === '/oauth-callback') {
                     await this._handleCallback(url, res, port, clientId);
                 } else {
-                    res.writeHead(404); res.end('Not found');
+                    res.writeHead(404);
+                    res.end('Not found');
                 }
             });
             this.callbackServer.listen(port, () => resolve());
@@ -140,14 +174,24 @@ class GoogleOAuth {
 
     async _handleCallback(url, res, port, clientId) {
         const code = url.searchParams.get('code');
-        if (!code || !this.pendingAuth) return;
+        if (!code || !this.pendingAuth) {
+            res.writeHead(400, { 'Content-Type': 'text/html' });
+            res.end(this._getErrorPage('Invalid callback. Missing authorization code.'));
+            return;
+        }
 
         try {
-            const tokens = await this.exchangeCode(code, this.pendingAuth.codeVerifier, port, clientId, this.pendingAuth.clientSecret);
+            const tokens = await this.exchangeCode(
+                code,
+                this.pendingAuth.codeVerifier,
+                port,
+                clientId,
+                this.pendingAuth.clientSecret
+            );
             const userInfo = await this.getUserInfo(tokens.access_token);
 
             // PROJECT DISCOVERY
-            console.log('🔍 Discovering Project ID...');
+            console.log('[AUTH] Discovering Project ID...');
             let projectId = 'rising-fact-p41fc';
             try {
                 const discRes = await fetch('https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist', {
@@ -155,17 +199,32 @@ class GoogleOAuth {
                     headers: {
                         'Authorization': `Bearer ${tokens.access_token}`,
                         'Content-Type': 'application/json',
-                        'X-Goog-Api-Client': 'google-cloud-sdk vscode_cloudshelleditor/0.1'
+                        'User-Agent': 'google-api-nodejs-client/9.15.1',
+                        'X-Goog-Api-Client': 'google-cloud-sdk vscode_cloudshelleditor/0.1',
+                        'Client-Metadata': JSON.stringify({
+                            ideType: 'IDE_UNSPECIFIED',
+                            platform: 'PLATFORM_UNSPECIFIED',
+                            pluginType: 'GEMINI'
+                        })
                     },
-                    body: JSON.stringify({ metadata: { ideType: "IDE_UNSPECIFIED", platform: "PLATFORM_UNSPECIFIED", pluginType: "GEMINI" } })
+                    body: JSON.stringify({
+                        metadata: { ideType: 'IDE_UNSPECIFIED', platform: 'PLATFORM_UNSPECIFIED', pluginType: 'GEMINI' }
+                    })
                 });
                 if (discRes.ok) {
                     const data = await discRes.json();
-                    projectId = data.cloudaicompanionProject?.id || projectId;
+                    if (data.cloudaicompanionProject) {
+                        projectId = typeof data.cloudaicompanionProject === 'string'
+                            ? data.cloudaicompanionProject
+                            : (data.cloudaicompanionProject.id || projectId);
+                    }
                 }
-            } catch (e) { console.warn('Project discovery failed', e); }
+            } catch (e) {
+                console.warn('Project discovery failed', e);
+            }
 
             await this.tokenManager.saveTokens({
+                provider: 'google-antigravity',
                 accessToken: tokens.access_token,
                 refreshToken: tokens.refresh_token,
                 expiresAt: Date.now() + (tokens.expires_in * 1000),
@@ -177,10 +236,11 @@ class GoogleOAuth {
             });
 
             res.writeHead(200, { 'Content-Type': 'text/html' });
-            res.end('<h1>Login Success! Return to DevStudio.</h1>');
+            res.end(this._getSuccessPage(userInfo.name, userInfo.email));
             if (this.io) this.io.emit('auth:success', { email: userInfo.email });
         } catch (err) {
-            res.end(`Error: ${err.message}`);
+            res.writeHead(500, { 'Content-Type': 'text/html' });
+            res.end(this._getErrorPage(err.message));
         } finally {
             this.stopCallbackServer();
         }
@@ -193,7 +253,7 @@ class GoogleOAuth {
         if (this.callbackServer) {
             this.callbackServer.close();
             this.callbackServer = null;
-            console.log('🔐 OAuth callback server stopped');
+            console.log('OAuth callback server stopped');
         }
     }
 
@@ -230,7 +290,7 @@ class GoogleOAuth {
 </style></head>
 <body>
   <div class="card">
-    <div class="icon">✅</div>
+    <div class="icon">OK</div>
     <h1>Authentication Successful!</h1>
     <p>Welcome, <strong>${name}</strong></p>
     <p>${email}</p>
@@ -258,7 +318,7 @@ class GoogleOAuth {
 </style></head>
 <body>
   <div class="card">
-    <div class="icon">❌</div>
+    <div class="icon">X</div>
     <h1>Authentication Failed</h1>
     <p>${error}</p>
     <p class="hint">Please try again from DevStudio Settings.</p>

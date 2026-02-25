@@ -17,6 +17,7 @@ import GitPanel from '@/components/ide/GitPanel';
 import DebugPanel from '@/components/ide/DebugPanel';
 import SettingsPanel from '@/components/ide/SettingsPanel';
 import AIActivityPanel from '@/components/ide/AIActivityPanel';
+import AIReportView from '@/components/ide/AIReportView';
 import CommandPalette from '@/components/ide/CommandPalette';
 import Breadcrumbs from '@/components/ide/Breadcrumbs';
 import { ShortcutsModal, TipsModal, AboutModal, WelcomeModal, ComingSoonToast, GoToLineModal, QuickOpenModal } from '@/components/ide/HelpModals';
@@ -198,7 +199,7 @@ export default function Layout() {
   // Welcome modal on first load
   // ✅ FINAL: Single Combined useEffect for Extension System
   useEffect(() => {
-    console.log('🎬 Layout: Setting up extensions...');
+    // console.log('🎬 Layout: Setting up extensions...');
 
     // 1️⃣ Create FULL context for extensions
     const context = {
@@ -219,7 +220,7 @@ export default function Layout() {
 
     // 2️⃣ Register listeners FIRST
     const removeStatus = registry.onStatusBarUpdate((item) => {
-      console.log('📥 Layout: Received status bar item:', item);
+      // console.log('📥 Layout: Received status bar item:', item);
       setStatusBarItems(prev => {
         const exists = prev.find(i => i.id === item.id);
         if (exists) {
@@ -230,7 +231,7 @@ export default function Layout() {
     });
 
     const removeEditor = registry.onEditorButtonUpdate((btn) => {
-      console.log('📥 Layout: Received editor button:', btn);
+      // console.log('📥 Layout: Received editor button:', btn);
       setExtEditorButtons(prev => {
         if (prev.find(b => b.id === btn.id)) return prev;
         return [...prev, btn];
@@ -238,19 +239,19 @@ export default function Layout() {
     });
 
     // 3️⃣ Initialize extensions
-    console.log('⚡ Layout: Initializing registry...');
+    // console.log('⚡ Layout: Initializing registry...');
     registry.initialize(context);
 
     // 4️⃣ Get sidebar items
     const sidebarItems = registry.getSidebarItems();
-    console.log('📋 Layout: Loaded sidebar items:', sidebarItems);
+    // console.log('📋 Layout: Loaded sidebar items:', sidebarItems);
     setExtSidebarItems(sidebarItems);
 
-    console.log('✅ Layout: Extensions setup complete');
+    // console.log('✅ Layout: Extensions setup complete');
 
     // 5️⃣ Cleanup on unmount
     return () => {
-      console.log('🧹 Layout: Cleaning up extension listeners');
+      // console.log('🧹 Layout: Cleaning up extension listeners');
       try { removeStatus(); } catch (e) { console.error(e); }
       try { removeEditor(); } catch (e) { console.error(e); }
     };
@@ -294,7 +295,7 @@ export default function Layout() {
         updateEditorContent(content);
         // Also update file in file list
         setFiles(prev => prev.map(f => f.id === activeFile.id ? { ...f, content } : f));
-        console.log('🔄 Active file content refreshed:', activeFile.name);
+        // console.log('🔄 Active file content refreshed:', activeFile.name);
       }
     } catch (error) {
       console.error('Failed to refresh active file:', error);
@@ -328,7 +329,7 @@ export default function Layout() {
             return newF;
           });
         });
-        console.log('🔄 Directory tree refreshed');
+        // console.log('🔄 Directory tree refreshed');
       }
     } catch (error) {
       console.error('Failed to refresh directory tree:', error);
@@ -341,7 +342,7 @@ export default function Layout() {
 
     let refreshTimeout;
     const cleanup = window.electronAPI.onFileChanged(() => {
-      console.log('🔔 Layout: Received fs:changed from Electron');
+      // console.log('🔔 Layout: Received fs:changed from Electron');
       clearTimeout(refreshTimeout);
       refreshTimeout = setTimeout(() => {
         refreshDirectoryTree();
@@ -417,12 +418,12 @@ export default function Layout() {
     const socket = io('http://localhost:3001');
 
     socket.on('connect', () => {
-      console.log('🔌 Layout: Connected to Backend Socket');
+      // console.log('🔌 Layout: Connected to Backend Socket');
     });
 
     let refreshTimeout;
     socket.on('fs:refresh', (data) => {
-      console.log('🔄 Layout: Received fs:refresh event', data);
+      // console.log('🔄 Layout: Received fs:refresh event', data);
 
       // Debounce refresh - but keep it fast (100ms)
       clearTimeout(refreshTimeout);
@@ -446,6 +447,97 @@ export default function Layout() {
       socket.disconnect();
     };
   }, [refreshActiveFile, refreshDirectoryTree]);
+
+  // Open AI artifact as a virtual editor tab/page
+  useEffect(() => {
+    const handler = (event) => {
+      const payload = event?.detail || {};
+      const sid = String(payload.sessionId || 'unknown-session');
+      const artifactName = String(payload.artifactName || 'artifact.md');
+      const fileId = `ai-artifact:${sid}:${artifactName}`;
+      const virtualFile = {
+        id: fileId,
+        name: artifactName,
+        path: fileId,
+        realPath: fileId,
+        type: 'ai-artifact',
+        content: String(payload.content || ''),
+      };
+      setOpenFiles((prev) => {
+        const exists = prev.find((f) => f.id === fileId);
+        if (exists) {
+          return prev.map((f) => (f.id === fileId ? { ...f, ...virtualFile } : f));
+        }
+        return [...prev, virtualFile];
+      });
+      setActiveFile(virtualFile);
+    };
+
+    window.addEventListener('devstudio:open-ai-artifact', handler);
+    return () => window.removeEventListener('devstudio:open-ai-artifact', handler);
+  }, []);
+
+  // Open workspace file references coming from chat markdown links.
+  useEffect(() => {
+    const normalizePath = (p) => String(p || '').replace(/\\/g, '/').toLowerCase();
+    const getBaseName = (p) => {
+      const s = String(p || '').replace(/\\/g, '/');
+      const i = s.lastIndexOf('/');
+      return i >= 0 ? s.slice(i + 1) : s;
+    };
+    const fileList = () => (Array.isArray(files) ? files : []);
+
+    const handler = async (event) => {
+      const rawPath = String(event?.detail?.path || '').trim();
+      if (!rawPath) return;
+
+      const workspaceRoot = localStorage.getItem('devstudio-last-project') || '';
+      let resolved = rawPath.replace(/^file:\/\//i, '');
+      if (/^\/[A-Za-z]:\//.test(resolved)) resolved = resolved.slice(1);
+
+      if (!/^[A-Za-z]:[\\/]/.test(resolved) && !resolved.startsWith('/') && workspaceRoot) {
+        const sep = workspaceRoot.includes('\\') ? '\\' : '/';
+        const clean = resolved.replace(/^\.?[\\/]/, '');
+        resolved = `${workspaceRoot}${sep}${clean}`;
+      }
+
+      const norm = normalizePath(resolved);
+      const rawNorm = normalizePath(rawPath);
+      const rawBase = getBaseName(rawPath);
+      let file = fileList().find((f) => normalizePath(f.realPath || f.id) === norm);
+      if (!file) file = fileList().find((f) => normalizePath(f.realPath || f.id).endsWith(`/${rawNorm}`));
+      if (!file && rawBase) file = fileList().find((f) => String(f.name || '').toLowerCase() === rawBase.toLowerCase());
+      if (!file && rawBase) file = fileList().find((f) => normalizePath(f.realPath || f.id).endsWith(`/${rawBase.toLowerCase()}`));
+
+      if (!file && window.electronAPI) {
+        try {
+          const content = await window.electronAPI.readFile(resolved);
+          file = {
+            id: resolved,
+            name: getBaseName(resolved),
+            path: resolved,
+            realPath: resolved,
+            content,
+          };
+          setFiles((prev) => (prev.find((f) => f.id === file.id) ? prev : [...prev, file]));
+        } catch {
+          toast.error(`File not found: ${rawPath}`);
+          return;
+        }
+      }
+
+      if (!file) {
+        toast.error(`Cannot open reference: ${rawPath}`);
+        return;
+      }
+
+      setOpenFiles((prev) => (prev.find((f) => f.id === file.id) ? prev : [...prev, file]));
+      setActiveFile(file);
+    };
+
+    window.addEventListener('devstudio:open-file-ref', handler);
+    return () => window.removeEventListener('devstudio:open-file-ref', handler);
+  }, [files]);
 
   // File click handler (open in editor)
   const handleFileClick = async (file) => {
@@ -1031,6 +1123,9 @@ export default function Layout() {
                   onOpenWhatsNew={() => setShowWhatsNew(true)}
                 />
               ) : activeFile ? (
+                activeFile.type === 'ai-artifact' ? (
+                  <AIReportView file={activeFile} />
+                ) : (
                 <CodeEditor
                   file={activeFile}
                   files={files}
@@ -1045,6 +1140,7 @@ export default function Layout() {
                   diffLabel={diffLabel}
                   onCloseDiff={handleCloseDiff}
                 />
+                )
               ) : (
                 <WelcomeScreen
                   onOpenFolder={handleOpenFolder}

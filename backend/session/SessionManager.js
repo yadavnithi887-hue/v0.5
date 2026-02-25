@@ -58,6 +58,29 @@ class SessionManager {
     }
 
     /**
+     * Explicitly create a new session file if it does not exist yet.
+     * Useful for "new chat" actions before first message arrives.
+     */
+    async createSession(chatId, metadata = {}) {
+        const strChatId = String(chatId);
+        const existing = this.cache.get(strChatId);
+        if (existing) {
+            return existing;
+        }
+
+        const filePath = this._getFilePath(strChatId);
+        if (fs.existsSync(filePath)) {
+            return await this.getSession(strChatId);
+        }
+
+        const session = this._createNewSession(strChatId);
+        session.metadata = { ...(session.metadata || {}), ...metadata };
+        this.cache.set(strChatId, session);
+        await this.saveSession(strChatId);
+        return session;
+    }
+
+    /**
      * Create a new empty session
      */
     _createNewSession(chatId) {

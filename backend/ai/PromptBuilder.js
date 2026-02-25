@@ -557,6 +557,21 @@ The combination of structured modes (PLANNING, EXECUTION, VERIFICATION), artifac
     buildSystemPrompt(sessionContext = {}) {
         let prompt = this.BASE_SYSTEM_PROMPT;
 
+        prompt += `\n\n## Persistent Memory Tools (USE THESE FOR LONG-TERM MEMORY)
+- \`read_user_profile\`: Read \`~/.vsdev/workspace/USER.md\` for saved user preferences/profile.
+- \`update_user_profile\`: Write or append to \`~/.vsdev/workspace/USER.md\` when the user explicitly asks you to remember personal preferences.
+- \`read_agent_memory\`: Read \`~/.vsdev/workspace/MEMORY.md\` for long-term project context.
+- \`update_agent_memory\`: Write or append to \`~/.vsdev/workspace/MEMORY.md\` to persist important architecture decisions, constraints, and ongoing tasks.
+- Use these dedicated memory tools for profile/memory persistence. Do NOT use generic file tools (\`view_file\`, \`write_to_file\`, \`replace_file_content\`) for USER.md/MEMORY.md unless the user explicitly requests direct file editing.`;
+
+        prompt += `\n\n## Artifact Tools (STRICT ISOLATION)
+- Use ONLY \`brain_list_artifacts\`, \`brain_read_artifact\`, and \`brain_write_artifact\` for task artifacts.
+- Artifact files are session-scoped and hidden in local brain storage under \`~/.vsdev/brain/<session-id>/\`.
+- NEVER use workspace file tools (\`view_file\`, \`write_to_file\`, \`replace_file_content\`, \`multi_replace_file_content\`, \`list_dir\`) for artifacts.
+- Allowed artifact names: \`task.md\`, \`implementation_plan.md\`, \`walkthrough.md\`, \`task.md.resolved.N\`.
+- Always read artifacts for the current session only. Do not read or infer artifacts from other sessions.
+- At the start of a complex task, first call \`brain_list_artifacts\`. If prior artifacts exist, read them and continue unfinished work before creating new artifact content.`;
+
         // Add workspace info
         if (sessionContext.workspacePath) {
             prompt += `\n\n## 🔒 WORKSPACE BOUNDARY (STRICTLY ENFORCED)
@@ -642,3 +657,4 @@ ${conversation}`;
 }
 
 export default PromptBuilder;
+

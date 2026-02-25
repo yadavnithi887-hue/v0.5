@@ -53,7 +53,7 @@ class ExtensionRegistry {
         Object.entries(states).forEach(([id, enabled]) => {
           this.extensionStates.set(id, enabled);
         });
-        console.log('📦 Loaded extension states:', states);
+        // console.log('📦 Loaded extension states:', states);
       }
     } catch (e) {
       console.error('Error loading extension states:', e);
@@ -68,7 +68,7 @@ class ExtensionRegistry {
         states[id] = enabled;
       });
       localStorage.setItem('extension_states', JSON.stringify(states));
-      console.log('💾 Saved extension states:', states);
+      // console.log('💾 Saved extension states:', states);
     } catch (e) {
       console.error('Error saving extension states:', e);
     }
@@ -82,7 +82,7 @@ class ExtensionRegistry {
 
   // 🔥 Enable/Disable extension
   setExtensionEnabled(extensionId, enabled) {
-    console.log(`${enabled ? '✅' : '❌'} ${extensionId} → ${enabled ? 'ENABLED' : 'DISABLED'}`);
+    // console.log(`${enabled ? '✅' : '❌'} ${extensionId} → ${enabled ? 'ENABLED' : 'DISABLED'}`);
 
     this.extensionStates.set(extensionId, enabled);
     this.saveExtensionStates();
@@ -99,7 +99,7 @@ class ExtensionRegistry {
   }
 
   initialize(context) {
-    console.log("🚀 Initializing Internal Extensions...");
+    // console.log("🚀 Initializing Internal Extensions...");
 
     // Store context for re-initialization
     this.context = context;
@@ -131,11 +131,11 @@ class ExtensionRegistry {
 
       // Skip activation if disabled
       if (!isEnabled) {
-        console.log(`⏸️  ${ext.metadata.name} (DISABLED)`);
+        // console.log(`⏸️  ${ext.metadata.name} (DISABLED)`);
         return;
       }
 
-      console.log(`📦 Loading: ${ext.metadata.name}`);
+      // console.log(`📦 Loading: ${ext.metadata.name}`);
 
       // Load settings schema (only if enabled)
       if (ext.settings) {
@@ -154,13 +154,13 @@ class ExtensionRegistry {
 
             // Register commands
             registerCommand: (id, fn) => {
-              console.log(`  ✓ Command registered: ${id}`);
+              // console.log(`  ✓ Command registered: ${id}`);
               this.commands.set(id, fn);
             },
 
             // Register sidebar panels
             registerSidebarPanel: (id, item, component) => {
-              console.log(`  ✓ Sidebar panel registered: ${id}`);
+              // console.log(`  ✓ Sidebar panel registered: ${id}`);
               this.sidebarItems.push({
                 id,
                 ...item,
@@ -177,7 +177,7 @@ class ExtensionRegistry {
 
               // Create status bar item
               createStatusBarItem: (item) => {
-                console.log(`  ✓ Status bar item created:`, item);
+                // console.log(`  ✓ Status bar item created:`, item);
 
                 const itemWithExtId = { ...item, extensionId: extId };
                 this.statusBarItems.push(itemWithExtId);
@@ -193,7 +193,7 @@ class ExtensionRegistry {
 
               // Register editor button
               registerEditorButton: (btn) => {
-                console.log(`  ✓ Editor button registered:`, btn);
+                // console.log(`  ✓ Editor button registered:`, btn);
 
                 const btnWithExtId = { ...btn, extensionId: extId };
                 this.editorButtons.push(btnWithExtId);
@@ -210,7 +210,7 @@ class ExtensionRegistry {
           };
 
           ext.activate(extContext);
-          console.log(`  ✅ ${ext.metadata.name} activated successfully`);
+          // console.log(`  ✅ ${ext.metadata.name} activated successfully`);
 
         } catch (e) {
           console.error(`❌ Failed to activate ${ext.metadata.name}:`, e);
@@ -219,8 +219,8 @@ class ExtensionRegistry {
     });
 
     this.initialized = true;
-    console.log("✅ All extensions initialized");
-    console.log(`📊 Active: ${this.extensionMetadata.filter(e => e.enabled).length}/${this.extensionMetadata.length}`);
+    // console.log("✅ All extensions initialized");
+    // console.log(`📊 Active: ${this.extensionMetadata.filter(e => e.enabled).length}/${this.extensionMetadata.length}`);
   }
 
   // Get current data
@@ -252,7 +252,7 @@ class ExtensionRegistry {
   executeCommand(id, args) {
     if (this.commands.has(id)) {
       try {
-        console.log(`⚡ Executing command: ${id}`);
+        // console.log(`⚡ Executing command: ${id}`);
         return this.commands.get(id)(args);
       } catch (e) {
         console.error(`Error executing command ${id}:`, e);
@@ -264,11 +264,11 @@ class ExtensionRegistry {
 
   // Register listeners with initial data
   onStatusBarUpdate(callback) {
-    console.log('📡 Status bar listener registered');
+    // console.log('📡 Status bar listener registered');
     this.statusBarCallbacks.push(callback);
 
     if (this.initialized) {
-      console.log(`  → Sending ${this.statusBarItems.length} existing items`);
+      // console.log(`  → Sending ${this.statusBarItems.length} existing items`);
       this.statusBarItems.forEach(item => {
         try {
           callback(item);
@@ -279,7 +279,7 @@ class ExtensionRegistry {
     }
 
     return () => {
-      console.log('📡 Status bar listener removed');
+      // console.log('📡 Status bar listener removed');
       this.statusBarCallbacks = this.statusBarCallbacks.filter(
         cb => cb !== callback
       );
@@ -287,11 +287,11 @@ class ExtensionRegistry {
   }
 
   onEditorButtonUpdate(callback) {
-    console.log('📡 Editor button listener registered');
+    // console.log('📡 Editor button listener registered');
     this.editorButtonCallbacks.push(callback);
 
     if (this.initialized) {
-      console.log(`  → Sending ${this.editorButtons.length} existing buttons`);
+      // console.log(`  → Sending ${this.editorButtons.length} existing buttons`);
       this.editorButtons.forEach(btn => {
         try {
           callback(btn);
@@ -302,7 +302,7 @@ class ExtensionRegistry {
     }
 
     return () => {
-      console.log('📡 Editor button listener removed');
+      // console.log('📡 Editor button listener removed');
       this.editorButtonCallbacks = this.editorButtonCallbacks.filter(
         cb => cb !== callback
       );

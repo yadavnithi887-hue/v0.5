@@ -6,6 +6,97 @@
  * All tool schemas formatted for Gemini API function calling
  */
 const toolSchemas = [
+    // ==================== Memory & Profile Tools ====================
+    {
+        name: "read_user_profile",
+        description: "Read the user's profile and preferences. Use this to remember the user's coding style, preferences, and personal notes. Takes no arguments.",
+        parameters: { type: "object", properties: {} }
+    },
+    {
+        name: "update_user_profile",
+        description: "Update the user's profile and preferences. Use this when the user explicitly tells you to remember something about them.",
+        parameters: {
+            type: "object",
+            properties: {
+                Content: { type: "string", description: "The complete content to write, or the content to append." },
+                Append: { type: "boolean", description: "If true, appends the content to the end. If false, overwrites the entire file." }
+            },
+            required: ["Content", "Append"]
+        }
+    },
+    {
+        name: "read_agent_memory",
+        description: "Read the AI's long-term memory. Use this to remember important project context, architectural decisions, and tasks across different chats. Takes no arguments.",
+        parameters: { type: "object", properties: {} }
+    },
+    {
+        name: "update_agent_memory",
+        description: "Update the AI's long-term memory. Use this to save important project context, architectural decisions, and tasks so you don't forget them in future chats.",
+        parameters: {
+            type: "object",
+            properties: {
+                Content: { type: "string", description: "The complete content to write, or the content to append." },
+                Append: { type: "boolean", description: "If true, appends the content to the end. If false, overwrites the entire file." }
+            },
+            required: ["Content", "Append"]
+        }
+    },
+    {
+        name: "brain_list_artifacts",
+        description: "List artifact files for the current session from hidden local brain storage. Use this before reading or updating task artifacts.",
+        parameters: { type: "object", properties: {} }
+    },
+    {
+        name: "brain_read_artifact",
+        description: "Read a session artifact file from hidden local brain storage. Allowed names: task.md, implementation_plan.md, walkthrough.md, task.md.resolved.N",
+        parameters: {
+            type: "object",
+            properties: {
+                ArtifactName: { type: "string", description: "Artifact file name only, not a path." }
+            },
+            required: ["ArtifactName"]
+        }
+    },
+    {
+        name: "brain_write_artifact",
+        description: "Write or append a session artifact file in hidden local brain storage. Never use workspace file tools for artifacts.",
+        parameters: {
+            type: "object",
+            properties: {
+                ArtifactName: { type: "string", description: "Artifact file name only, not a path." },
+                Content: { type: "string", description: "Content to write or append." },
+                Append: { type: "boolean", description: "If true append; if false overwrite." }
+            },
+            required: ["ArtifactName", "Content", "Append"]
+        }
+    },
+    {
+        name: "task_boundary",
+        description: "Update structured task progress in the UI. Use this to report current mode, objective, and status while working.",
+        parameters: {
+            type: "object",
+            properties: {
+                Mode: {
+                    type: "string",
+                    description: "One of: PLANNING, EXECUTION, VERIFICATION"
+                },
+                TaskName: {
+                    type: "string",
+                    description: "Current objective title. Example: Implementing Authentication"
+                },
+                TaskSummary: {
+                    type: "string",
+                    description: "High-level summary of the objective and accumulated progress."
+                },
+                TaskStatus: {
+                    type: "string",
+                    description: "What you are doing right now."
+                }
+            },
+            required: ["Mode", "TaskName", "TaskSummary", "TaskStatus"]
+        }
+    },
+
     // ==================== File Inspection Tools ====================
     {
         name: "view_file",

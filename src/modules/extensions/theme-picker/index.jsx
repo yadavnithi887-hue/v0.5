@@ -175,7 +175,7 @@ const ThemePanel = ({ context }) => {
 
         setActiveTheme(id);
 
-        console.log('Applying theme:', id, theme.vars);
+        // console.log('Applying theme:', id, theme.vars);
 
         // Apply variables to root
         const root = document.documentElement;
@@ -243,7 +243,7 @@ export const activate = (context) => {
         (props) => <ThemePanel context={context} {...props} />
     );
 
-    console.log("Theme Picker Activated");
+    // console.log("Theme Picker Activated");
 
     // Attempt to restore theme on activation
     const saved = localStorage.getItem('devstudio-theme');

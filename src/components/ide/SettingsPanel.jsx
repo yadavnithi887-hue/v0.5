@@ -262,6 +262,7 @@ export default function SettingsPanel({ settings, onSave, onSettingChange }) {
   const [pastedUrl, setPastedUrl] = useState('');
   const [clientIdInput, setClientIdInput] = useState('1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com');
   const [clientSecretInput, setClientSecretInput] = useState('');
+  const [hasSavedClientSecret, setHasSavedClientSecret] = useState(false);
 
   // Telegram Config State
   const [telegramConfigured, setTelegramConfigured] = useState({ isConfigured: false, maskedToken: null, chatId: null });
@@ -277,6 +278,13 @@ export default function SettingsPanel({ settings, onSave, onSettingChange }) {
     loadExtensions();
     // Load auth status and gateway config on mount
     fetch('http://localhost:3001/api/auth/status').then(r => r.json()).then(setAuthState).catch(() => { });
+    fetch('http://localhost:3001/api/auth/config')
+      .then(r => r.json())
+      .then((cfg) => {
+        if (cfg?.clientId) setClientIdInput(cfg.clientId);
+        setHasSavedClientSecret(!!cfg?.hasClientSecret);
+      })
+      .catch(() => { });
     fetch('http://localhost:3001/api/gateway/status').then(r => r.json()).then(data => {
       if (data.botToken) {
         setTelegramConfigured({ isConfigured: true, maskedToken: data.botToken, chatId: data.chatId });
@@ -289,6 +297,25 @@ export default function SettingsPanel({ settings, onSave, onSettingChange }) {
       }));
     }).catch(() => { });
   }, []);
+
+  useEffect(() => {
+    if (!manualAuthUrl || authState.authenticated) return;
+    const interval = setInterval(() => {
+      fetch('http://localhost:3001/api/auth/status')
+        .then(r => r.json())
+        .then((s) => {
+          if (s?.authenticated) {
+            setAuthState(s);
+            setManualAuthUrl('');
+            setPastedUrl('');
+            setAuthLoading(false);
+            toast.success("Successfully authenticated!");
+          }
+        })
+        .catch(() => { });
+    }, 1500);
+    return () => clearInterval(interval);
+  }, [manualAuthUrl, authState.authenticated]);
 
   const loadExtensions = () => {
     const allExtensions = registry.getAllExtensions();
@@ -402,7 +429,7 @@ export default function SettingsPanel({ settings, onSave, onSettingChange }) {
                 <div className="flex gap-2">
                   <input
                     type="password"
-                    placeholder="OAuth Client Secret (Required for Antigravity)"
+                    placeholder={hasSavedClientSecret ? "OAuth Client Secret (Saved in local config)" : "OAuth Client Secret"}
                     className="flex-1 sp-input border rounded px-3 py-1.5 text-xs text-zinc-400"
                     value={clientSecretInput}
                     onChange={(e) => setClientSecretInput(e.target.value)}
@@ -415,6 +442,12 @@ export default function SettingsPanel({ settings, onSave, onSettingChange }) {
 
                       console.log('Starting Antigravity OAuth with Client ID:', clientId);
 
+                      fetch('http://localhost:3001/api/auth/config', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ clientId, clientSecret })
+                      }).catch(() => { });
+
                       fetch('http://localhost:3001/api/auth/start', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
@@ -423,7 +456,7 @@ export default function SettingsPanel({ settings, onSave, onSettingChange }) {
                         if (data.authURL) {
                           setManualAuthUrl(data.authURL);
                           window.open(data.authURL, '_blank');
-                          toast.info("Auth URL generated. Please sign in and copy the redirect URL.");
+                          toast.info("Browser opened for Google OAuth. Complete sign-in and return to IDE.");
                         } else {
                           toast.error("Backend error: " + (data.error || 'Unknown response'));
                         }

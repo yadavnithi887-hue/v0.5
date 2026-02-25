@@ -13,6 +13,37 @@ class TokenManager {
         this._ensureDataDir();
     }
 
+    _profileKey(provider, email) {
+        return `${provider}:${String(email || '').toLowerCase()}`;
+    }
+
+    _ensureAuthProfiles(config) {
+        if (!config.authProfiles || typeof config.authProfiles !== 'object') {
+            config.authProfiles = {};
+        }
+        if (!config.authProfiles.profiles || typeof config.authProfiles.profiles !== 'object') {
+            config.authProfiles.profiles = {};
+        }
+        if (!config.authProfiles.lastGood || typeof config.authProfiles.lastGood !== 'object') {
+            config.authProfiles.lastGood = {};
+        }
+        if (!config.authProfiles.usageStats || typeof config.authProfiles.usageStats !== 'object') {
+            config.authProfiles.usageStats = {};
+        }
+    }
+
+    _touchProfileUsage(config, profileKey, isFailure = false) {
+        this._ensureAuthProfiles(config);
+        const now = Date.now();
+        const prev = config.authProfiles.usageStats[profileKey] || { errorCount: 0 };
+        config.authProfiles.usageStats[profileKey] = {
+            ...prev,
+            lastUsed: now,
+            lastFailureAt: isFailure ? now : (prev.lastFailureAt || now),
+            errorCount: isFailure ? Number(prev.errorCount || 0) + 1 : Number(prev.errorCount || 0),
+        };
+    }
+
     /**
      * Ensure data directory exists
      */
@@ -49,6 +80,34 @@ class TokenManager {
      */
     async saveTokens(tokenData) {
         const config = this._loadConfig();
+        if (tokenData.clientId || tokenData.clientSecret) {
+            config.app = {
+                ...(config.app || {}),
+                ...(tokenData.clientId ? { clientId: tokenData.clientId } : {}),
+                ...(tokenData.clientSecret ? { clientSecret: tokenData.clientSecret } : {}),
+            };
+        }
+        this._ensureAuthProfiles(config);
+
+        const provider = tokenData.provider || 'google-antigravity';
+        const profileKey = this._profileKey(provider, tokenData.userEmail);
+        config.authProfiles.profiles[profileKey] = {
+            type: 'oauth',
+            provider,
+            access: tokenData.accessToken,
+            refresh: tokenData.refreshToken,
+            expires: tokenData.expiresAt,
+            email: tokenData.userEmail,
+            projectId: tokenData.projectId || 'rising-fact-p41fc',
+            clientId: tokenData.clientId,
+            clientSecret: tokenData.clientSecret,
+            name: tokenData.userName,
+            picture: tokenData.userPicture,
+            savedAt: Date.now(),
+        };
+        config.authProfiles.lastGood[provider] = profileKey;
+        this._touchProfileUsage(config, profileKey, false);
+
         config.oauth = {
             accessToken: tokenData.accessToken,
             refreshToken: tokenData.refreshToken,
@@ -57,9 +116,12 @@ class TokenManager {
             scope: tokenData.scope,
             clientId: tokenData.clientId,
             clientSecret: tokenData.clientSecret,
+            projectId: tokenData.projectId,
             userEmail: tokenData.userEmail,
             userName: tokenData.userName,
             userPicture: tokenData.userPicture,
+            provider,
+            profileKey,
             savedAt: Date.now()
         };
         this._saveConfig(config);
@@ -86,10 +148,18 @@ class TokenManager {
                 return refreshed;
             } catch (err) {
                 console.error('[AUTH] Token refresh failed:', err.message);
+                if (oauth.profileKey) {
+                    this._touchProfileUsage(config, oauth.profileKey, true);
+                    this._saveConfig(config);
+                }
                 return null;
             }
         }
 
+        if (oauth.profileKey) {
+            this._touchProfileUsage(config, oauth.profileKey, false);
+            this._saveConfig(config);
+        }
         return oauth.accessToken;
     }
 
@@ -134,6 +204,29 @@ class TokenManager {
             config.oauth.refreshToken = tokens.refresh_token;
         }
         config.oauth.lastRefreshed = Date.now();
+
+        // Keep profile store in sync with active oauth token.
+        if (config.oauth.profileKey) {
+            this._ensureAuthProfiles(config);
+            const profile = config.authProfiles.profiles[config.oauth.profileKey] || {};
+            config.authProfiles.profiles[config.oauth.profileKey] = {
+                ...profile,
+                type: 'oauth',
+                provider: config.oauth.provider || profile.provider || 'google-antigravity',
+                email: config.oauth.userEmail || profile.email,
+                access: tokens.access_token,
+                refresh: tokens.refresh_token || config.oauth.refreshToken || profile.refresh,
+                expires: config.oauth.expiresAt,
+                projectId: config.oauth.projectId || profile.projectId || 'rising-fact-p41fc',
+                clientId: config.oauth.clientId || profile.clientId,
+                clientSecret: config.oauth.clientSecret || profile.clientSecret,
+                name: config.oauth.userName || profile.name,
+                picture: config.oauth.userPicture || profile.picture,
+                lastRefreshed: config.oauth.lastRefreshed,
+            };
+            this._touchProfileUsage(config, config.oauth.profileKey, false);
+        }
+
         this._saveConfig(config);
 
         console.log('[AUTH] Token refreshed successfully');
@@ -174,7 +267,12 @@ class TokenManager {
      */
     getProjectId() {
         const config = this._loadConfig();
-        return config.oauth?.projectId || 'rising-fact-p41fc';
+        if (config.oauth?.projectId) return config.oauth.projectId;
+        const profileKey = config.authProfiles?.lastGood?.['google-antigravity'];
+        if (profileKey && config.authProfiles?.profiles?.[profileKey]?.projectId) {
+            return config.authProfiles.profiles[profileKey].projectId;
+        }
+        return 'rising-fact-p41fc';
     }
 
     /**
@@ -182,9 +280,83 @@ class TokenManager {
      */
     logout() {
         const config = this._loadConfig();
+        this._ensureAuthProfiles(config);
+        if (config.oauth?.clientId || config.oauth?.clientSecret) {
+            config.app = {
+                ...(config.app || {}),
+                ...(config.oauth?.clientId ? { clientId: config.oauth.clientId } : {}),
+                ...(config.oauth?.clientSecret ? { clientSecret: config.oauth.clientSecret } : {}),
+            };
+        }
+
+        // Keep last active profile available for future sign-in selection.
+        if (config.oauth?.profileKey && config.oauth?.provider) {
+            config.authProfiles.lastGood[config.oauth.provider] = config.oauth.profileKey;
+            this._touchProfileUsage(config, config.oauth.profileKey, false);
+        }
         delete config.oauth;
         this._saveConfig(config);
         console.log('🔓 Logged out, tokens cleared');
+    }
+
+    /**
+     * List saved OAuth profiles (safe metadata only)
+     */
+    getAuthProfiles(provider = null) {
+        const config = this._loadConfig();
+        this._ensureAuthProfiles(config);
+        const entries = Object.entries(config.authProfiles.profiles)
+            .filter(([, profile]) => !provider || profile.provider === provider)
+            .map(([key, profile]) => ({
+                key,
+                provider: profile.provider,
+                email: profile.email,
+                name: profile.name || '',
+                picture: profile.picture || '',
+                expires: profile.expires || null,
+                projectId: profile.projectId || '',
+                lastUsed: config.authProfiles.usageStats?.[key]?.lastUsed || null,
+                errorCount: config.authProfiles.usageStats?.[key]?.errorCount || 0,
+            }));
+        return {
+            version: 1,
+            profiles: entries,
+            lastGood: config.authProfiles.lastGood || {},
+            activeProfileKey: config.oauth?.profileKey || null,
+        };
+    }
+
+    /**
+     * Activate one saved profile as current oauth session
+     */
+    useAuthProfile(profileKey) {
+        const config = this._loadConfig();
+        this._ensureAuthProfiles(config);
+        const profile = config.authProfiles.profiles?.[profileKey];
+        if (!profile) throw new Error(`Profile not found: ${profileKey}`);
+
+        config.oauth = {
+            accessToken: profile.access,
+            refreshToken: profile.refresh,
+            expiresAt: profile.expires,
+            tokenType: 'Bearer',
+            scope: undefined,
+            clientId: profile.clientId || config.app?.clientId,
+            clientSecret: profile.clientSecret || config.app?.clientSecret,
+            projectId: profile.projectId || 'rising-fact-p41fc',
+            userEmail: profile.email,
+            userName: profile.name,
+            userPicture: profile.picture,
+            provider: profile.provider || 'google-antigravity',
+            profileKey,
+            savedAt: Date.now(),
+        };
+
+        const provider = config.oauth.provider;
+        config.authProfiles.lastGood[provider] = profileKey;
+        this._touchProfileUsage(config, profileKey, false);
+        this._saveConfig(config);
+        return this.getAuthStatus();
     }
 
     // ========================================

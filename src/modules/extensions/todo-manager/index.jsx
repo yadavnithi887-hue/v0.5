@@ -94,7 +94,7 @@ const TodoPanel = ({ context, files = [] }) => {
 
         try {
             const rootPath = localStorage.getItem('devstudio-last-project');
-            console.log('[TODO] Root path:', rootPath);
+            // console.log('[TODO] Root path:', rootPath);
 
             if (!rootPath) {
                 context.window.showWarningMessage("No project opened");
@@ -103,30 +103,30 @@ const TodoPanel = ({ context, files = [] }) => {
             }
 
             // Use files from props
-            console.log('[TODO] Files from props:', files);
+            // console.log('[TODO] Files from props:', files);
             const filesToScan = files
                 .filter(f => f.realPath || f.path)
                 .map(f => f.realPath || f.path);
 
-            console.log('[TODO] Files to scan:', filesToScan);
+            // console.log('[TODO] Files to scan:', filesToScan);
 
             // Scan open files
             if (filesToScan.length > 0) {
                 for (const filePath of filesToScan) {
-                    console.log('[TODO] Scanning file:', filePath);
+                    // console.log('[TODO] Scanning file:', filePath);
                     const result = await window.electronAPI.readFile(filePath);
                     if (result.success) {
-                        console.log('[TODO] File read successfully, content length:', result.content.length);
+                        // console.log('[TODO] File read successfully, content length:', result.content.length);
                         scanFileContent(filePath, result.content, found, keywords);
                     } else {
-                        console.log('[TODO] Failed to read file:', result);
+                        // console.log('[TODO] Failed to read file:', result);
                     }
                 }
             } else {
                 console.warn('[TODO] No files to scan!');
             }
 
-            console.log('[TODO] Total found:', found.length, found);
+            // console.log('[TODO] Total found:', found.length, found);
             setScannedComments(found);
             context.window.showInformationMessage(`Found ${found.length} TODO comments in ${filesToScan.length} files`);
         } catch (e) {
@@ -454,5 +454,5 @@ export const activate = (context) => {
     // Update every 5 seconds
     setInterval(updateStatusBar, 5000);
 
-    console.log("Todo Manager Activated");
+    // console.log("Todo Manager Activated");
 };

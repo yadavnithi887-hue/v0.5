@@ -30,7 +30,13 @@ class FileSystemTools {
         const resolved = path.resolve(targetPath);
         const workspace = path.resolve(this.workspacePath);
         if (!resolved.toLowerCase().startsWith(workspace.toLowerCase())) {
-            throw new Error(`🚫 ACCESS DENIED: Path "${targetPath}" is outside the workspace root "${this.workspacePath}". The AI is only allowed to operate within the current workspace.`);
+            throw new Error(`ACCESS DENIED: Path "${targetPath}" is outside the workspace root "${this.workspacePath}". The AI is only allowed to operate within the current workspace.`);
+        }
+
+        // Artifacts must not be written via generic file tools.
+        const parts = resolved.split(path.sep).map((p) => p.toLowerCase());
+        if (parts.includes('.brain')) {
+            throw new Error('Artifact path is blocked for generic file tools. Use brain_list_artifacts, brain_read_artifact, brain_write_artifact.');
         }
     }
 
@@ -413,3 +419,4 @@ class FileSystemTools {
 }
 
 export default FileSystemTools;
+

@@ -70,14 +70,14 @@ export const activate = (context) => {
 
   context.registerCommand('liveServer.start', async () => {
     if (serverRunning) return toast.warning("Server is already running!");
-    
+
     const root = getWorkspaceRoot();
     if (!root) return toast.error("Please open a folder first!");
 
     toast.info("Starting live server...");
-    
+
     const res = await electronAPI.startLiveServer(root);
-    
+
     if (res.success) {
       serverRunning = true;
       updateStatusBar(true, res.port);
@@ -89,7 +89,7 @@ export const activate = (context) => {
 
   context.registerCommand('liveServer.stop', async () => {
     if (!serverRunning) return toast.warning("Server is not running.");
-    
+
     await electronAPI.stopLiveServer();
     serverRunning = false;
     updateStatusBar(false);
@@ -98,9 +98,9 @@ export const activate = (context) => {
 
   updateStatusBar(false);
 
-  console.log("🌐 Live Server Extension Activated!");
+  // console.log("🌐 Live Server Extension Activated!");
 };
 
 export const deactivate = () => {
-  console.log("🌐 Live Server Extension Deactivated");
+  // console.log("🌐 Live Server Extension Deactivated");
 };

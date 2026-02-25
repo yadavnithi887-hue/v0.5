@@ -74,10 +74,10 @@ export const settings = [
 ];
 
 export function activate(context) {
-  console.log('✨ Prettier: Activating...');
+  // console.log('✨ Prettier: Activating...');
 
   context.registerCommand('prettier.format', async () => {
-    console.log('✨ Prettier: Formatting code...');
+    // console.log('✨ Prettier: Formatting code...');
 
     if (!window.electronAPI || !window.electronAPI.formatWithPrettier) {
       context.window.showErrorMessage('Prettier not available (Electron API missing)');
@@ -133,7 +133,7 @@ export function activate(context) {
 
   registerKeyboardShortcut();
 
-  console.log('✅ Prettier Extension Activated!');
+  // console.log('✅ Prettier Extension Activated!');
 }
 
 function getActiveFile() {
@@ -184,5 +184,5 @@ function registerKeyboardShortcut() {
 }
 
 export function deactivate() {
-  console.log('✨ Prettier Extension Deactivated');
+  // console.log('✨ Prettier Extension Deactivated');
 }
