@@ -15,6 +15,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   renamePath: (oldPath, newPath) => ipcRenderer.invoke('fs:renamePath', { oldPath, newPath }),
   createFile: (path, content) => ipcRenderer.invoke('fs:createFile', { path, content }),
   createFolder: (path) => ipcRenderer.invoke('fs:createFolder', path),
+  restoreSnapshot: (filePath, content, isNewFile) => ipcRenderer.invoke('fs:restoreSnapshot', { filePath, content, isNewFile }),
   onFileChanged: (callback) => {
     ipcRenderer.on('fs:changed', callback);
     return () => ipcRenderer.removeListener('fs:changed', callback);
@@ -37,20 +38,47 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('terminal:incomingData', sub);
   },
 
-  // --- Git API ---
-  // ... (यह सेक्शन वैसा ही रहेगा) ...
+  // --- AI Terminal PTY API (Proxy for Backend) ---
+  executeAIPtyTerminal: (opts) => ipcRenderer.invoke('terminal:aiExecutePty', opts),
+  writeAIPtyTerminal: (commandId, data) => ipcRenderer.invoke('terminal:aiWritePty', { commandId, data }),
+  killAIPtyTerminal: (commandId) => ipcRenderer.invoke('terminal:aiKillPty', commandId),
+  onAIPtyTerminalData: (commandId, callback) => {
+    const channel = `terminal:aiData-${commandId}`;
+    const sub = (event, data) => callback(data);
+    ipcRenderer.on(channel, sub);
+    return () => ipcRenderer.removeListener(channel, sub);
+  },
+  onAIPtyTerminalExit: (commandId, callback) => {
+    const channel = `terminal:aiExit-${commandId}`;
+    const sub = (event, data) => callback(data);
+    ipcRenderer.on(channel, sub);
+    return () => ipcRenderer.removeListener(channel, sub);
+  },
+
+  // --- Git API (Secure) ---
   getGitStatus: (cwd) => ipcRenderer.invoke('git:status', cwd),
   gitInit: (cwd) => ipcRenderer.invoke('git:init', cwd),
   gitStage: (cwd, file) => ipcRenderer.invoke('git:stage', { cwd, file }),
   gitUnstage: (cwd, file) => ipcRenderer.invoke('git:unstage', { cwd, file }),
   gitCommit: (cwd, message) => ipcRenderer.invoke('git:commit', { cwd, message }),
-  gitPush: (data) => ipcRenderer.invoke('git:push', data), // <--- यहाँ बदलें
-  // preload.js
+  gitPush: (data) => ipcRenderer.invoke('git:push', data),
+  gitPull: (cwd) => ipcRenderer.invoke('git:pull', cwd),
   getGithubRepos: (token) => ipcRenderer.invoke('git:getGithubRepos', token),
   gitPublish: (data) => ipcRenderer.invoke('git:publish', data),
-  getBranches: (cwd) => ipcRenderer.invoke('git:getBranches', cwd),
+  getGitBranches: (cwd) => ipcRenderer.invoke('git:getBranches', cwd),
   gitCheckout: (cwd, branch) => ipcRenderer.invoke('git:checkout', { cwd, branch }),
   gitCreateBranch: (cwd, branch) => ipcRenderer.invoke('git:createBranch', { cwd, branch }),
+  gitDeleteBranch: (cwd, branch, force) => ipcRenderer.invoke('git:deleteBranch', { cwd, branch, force }),
+  gitMerge: (cwd, branch) => ipcRenderer.invoke('git:merge', { cwd, branch }),
+  gitLog: (cwd, maxCount) => ipcRenderer.invoke('git:log', { cwd, maxCount }),
+  gitDiff: (cwd, file, staged) => ipcRenderer.invoke('git:diff', { cwd, file, staged }),
+  gitStash: (cwd, message) => ipcRenderer.invoke('git:stash', { cwd, message }),
+  gitStashList: (cwd) => ipcRenderer.invoke('git:stashList', cwd),
+  gitStashApply: (cwd, index) => ipcRenderer.invoke('git:stashApply', { cwd, index }),
+  gitStashPop: (cwd, index) => ipcRenderer.invoke('git:stashPop', { cwd, index }),
+  gitStashDrop: (cwd, index) => ipcRenderer.invoke('git:stashDrop', { cwd, index }),
+  gitDiscard: (cwd, file) => ipcRenderer.invoke('git:discard', { cwd, file }),
+  gitClone: (url, targetDir, token) => ipcRenderer.invoke('git:clone', { url, targetDir, token }),
 
 
   // --- Extension APIs ---

@@ -1,79 +1,132 @@
-import React, { useState } from 'react';
-import { X, File, FileCode, FileJson, FileText, Pin, PinOff, Command } from 'lucide-react';
+import React from 'react';
+import { Copy, FileSearch, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
-  ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger,
-} from "@/components/ui/context-menu";
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu';
+import { CachedFileIcon } from '@/components/ide/CachedFileIcon';
 
-// Icon Helper
-const getFileIcon = (filename) => {
-  const ext = filename.split('.').pop()?.toLowerCase();
-  const icons = {
-    js: { icon: FileCode, color: 'text-yellow-400' },
-    jsx: { icon: FileCode, color: 'text-blue-400' },
-    ts: { icon: FileCode, color: 'text-blue-500' },
-    tsx: { icon: FileCode, color: 'text-blue-500' },
-    css: { icon: FileCode, color: 'text-blue-300' },
-    html: { icon: FileCode, color: 'text-orange-500' },
-    json: { icon: FileJson, color: 'text-yellow-500' },
-    md: { icon: FileText, color: 'text-white' },
-    py: { icon: FileCode, color: 'text-blue-400' },
-    java: { icon: FileCode, color: 'text-red-400' },
-  };
-  return icons[ext] || { icon: File, color: 'text-icon-file' };
+const getRelativePath = (file) => {
+  if (!file) return '';
+  if (file.path) return String(file.path).replace(/\\/g, '/');
+  return file.name || '';
 };
 
-export default function EditorTabs({ openFiles, activeFile, onTabClick, onTabClose, unsavedFiles }) {
+const getBreadcrumbPath = (file) => getRelativePath(file).split('/').filter(Boolean).join(' > ');
 
-  if (openFiles.length === 0) return null;
+export default function EditorTabs({
+  openFiles,
+  activeFile,
+  onTabClick,
+  onTabClose,
+  unsavedFiles,
+}) {
+  if (!openFiles?.length) return null;
+
+  const closeOthers = (targetFile) => {
+    openFiles.filter((f) => f.id !== targetFile.id).forEach((f) => onTabClose(f));
+  };
+
+  const closeToRight = (targetFile) => {
+    const index = openFiles.findIndex((f) => f.id === targetFile.id);
+    if (index < 0) return;
+    openFiles.slice(index + 1).forEach((f) => onTabClose(f));
+  };
+
+  const closeAll = () => {
+    openFiles.forEach((f) => onTabClose(f));
+  };
 
   return (
-    // 🔥 Overflow-X Auto added to fix hiding issue
-    <div className="h-9 bg-[#252526] flex items-end overflow-x-auto custom-scrollbar border-b border-[#252526] flex-shrink-0">
+    <div
+      className="h-10 pt-[1px] bg-[#1f1f1f] border-b border-[#2e2e2e] flex items-center overflow-x-auto scrollbar-hide flex-shrink-0"
+      style={{ fontFamily: '"Segoe UI", Inter, sans-serif' }}
+    >
       {openFiles.map((file) => {
-        const { icon: Icon, color } = file.type === 'welcome'
-          ? { icon: Command, color: 'text-purple-400' }
-          : getFileIcon(file.name);
-        // 🔥 Check agar file unsaved list me hai
-        const isDirty = unsavedFiles && unsavedFiles.has(file.id);
+        const isActive = activeFile?.id === file.id;
+        const isDirty = !!unsavedFiles?.has?.(file.id);
+        const relativePath = getRelativePath(file);
+        const realPath = file.realPath || relativePath || file.name || '';
 
         return (
           <ContextMenu key={file.id}>
             <ContextMenuTrigger>
               <div
                 className={cn(
-                  "h-8 flex items-center gap-2 px-3 cursor-pointer min-w-fit border border-transparent mr-1 rounded-t-md transition-all select-none",
-                  activeFile?.id === file.id
-                    ? "glass-button !bg-white/10 !border-white/10 text-white rounded-b-none"
-                    : "text-[#969696] hover:bg-white/5 hover:text-white rounded-md"
+                  'group relative h-8 flex items-center gap-2 px-3 cursor-pointer min-w-[140px] max-w-[220px] border-r border-[#2d2d2d] border-b-2 select-none rounded-t-[6px]',
+                  isActive ? 'bg-[#1e1e1e] text-white' : 'bg-[#252526] text-[#b9b9b9] hover:bg-[#2b2b2c] hover:text-white'
                 )}
+                style={{ borderBottomColor: isActive ? 'var(--primary)' : 'transparent' }}
                 onClick={() => onTabClick(file)}
+                title={realPath}
               >
-                <Icon size={14} className={color} />
-                <span className={cn("text-xs truncate max-w-[150px]", isDirty && "text-yellow-100")}>
+                <CachedFileIcon filename={file.name || ''} size={16} className="w-4 h-4 flex-shrink-0" />
+
+                <span className={cn('text-[13px] leading-none font-medium tracking-[0.1px] truncate flex-1', isDirty && 'text-[#f6cf8a]')}>
                   {file.name}
                 </span>
 
-                {/* 🔥 Logic: Agar Dirty hai to Dot, nahi to Close button */}
-                <div className="w-5 h-5 flex items-center justify-center ml-1 rounded hover:bg-white/10"
-                  onClick={(e) => { e.stopPropagation(); onTabClose(file); }}>
-
+                <button
+                  className={cn(
+                    'w-4 h-4 flex items-center justify-center rounded hover:bg-[#3a3a3a] text-[#b0b0b0] hover:text-white transition-opacity duration-150',
+                    isDirty ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                  )}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onTabClose(file);
+                  }}
+                  title="Close"
+                >
                   {isDirty ? (
-                    // White Dot (Dirty State)
-                    <div className="w-2 h-2 bg-white rounded-full group-hover:hidden" />
-                  ) : null}
+                    <>
+                      <span className="w-1.5 h-1.5 rounded-full bg-white group-hover:hidden" />
+                      <X size={12} className="hidden group-hover:block" />
+                    </>
+                  ) : (
+                    <X size={12} />
+                  )}
+                </button>
 
-                  {/* Close Icon (Hover karne par ya agar dirty nahi hai tab dikhega) */}
-                  <X size={14} className={cn(isDirty ? "hidden group-hover:block" : "block")} />
-
-                </div>
+                <div
+                  className={cn(
+                    'absolute left-0 right-0 bottom-0 h-[2px] transition-opacity',
+                    isActive ? 'opacity-0' : 'bg-[#0e639c] opacity-0 group-hover:opacity-100'
+                  )}
+                />
               </div>
             </ContextMenuTrigger>
 
-            <ContextMenuContent className="bg-[#252526] border-[#454545] text-white">
-              <ContextMenuItem onClick={() => onTabClose(file)}>Close</ContextMenuItem>
-              <ContextMenuItem onClick={() => { }}>Close Others</ContextMenuItem>
-              <ContextMenuItem onClick={() => { }}>Close All</ContextMenuItem>
+            <ContextMenuContent className="bg-[#252526] border-[#3c3c3c] text-white min-w-[240px]">
+              <ContextMenuItem onClick={() => onTabClose(file)} className="text-sm">
+                Close
+              </ContextMenuItem>
+              <ContextMenuItem onClick={() => closeOthers(file)} className="text-sm">
+                Close Others
+              </ContextMenuItem>
+              <ContextMenuItem onClick={() => closeToRight(file)} className="text-sm">
+                Close to the Right
+              </ContextMenuItem>
+              <ContextMenuItem onClick={closeAll} className="text-sm">
+                Close All
+              </ContextMenuItem>
+              <ContextMenuSeparator className="bg-[#3c3c3c]" />
+              <ContextMenuItem onClick={() => navigator.clipboard.writeText(realPath)} className="text-sm">
+                <Copy size={14} className="mr-2" /> Copy Path
+              </ContextMenuItem>
+              <ContextMenuItem onClick={() => navigator.clipboard.writeText(relativePath)} className="text-sm">
+                <Copy size={14} className="mr-2" /> Copy Relative Path
+              </ContextMenuItem>
+              <ContextMenuItem onClick={() => navigator.clipboard.writeText(getBreadcrumbPath(file))} className="text-sm">
+                <Copy size={14} className="mr-2" /> Copy Breadcrumbs Path
+              </ContextMenuItem>
+              <ContextMenuSeparator className="bg-[#3c3c3c]" />
+              <ContextMenuItem onClick={() => onTabClick(file)} className="text-sm">
+                <FileSearch size={14} className="mr-2" /> Reveal in Explorer View
+              </ContextMenuItem>
             </ContextMenuContent>
           </ContextMenu>
         );

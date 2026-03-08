@@ -1,0 +1,17 @@
+[36mvite v7.2.6 [32mbuilding client environment for production...[36m[39m
+transforming...
+
+<--- Last few GCs --->
+
+[11092:000001B4EF179000]    26487 ms: Scavenge (interleaved) 2029.3 (2055.2) -> 2028.6 (2072.2) MB, pooled: 0 MB, 19.76 / 0.00 ms  (average mu = 0.561, current mu = 0.487) allocation failure; 
+[11092:000001B4EF179000]    26997 ms: Mark-Compact (reduce) 2034.6 (2073.0) -> 2030.9 (2051.0) MB, pooled: 0 MB, 25.23 / 0.00 ms  (+ 440.7 ms in 88 steps since start of marking, biggest step 5.1 ms, walltime since start of marking 502 ms) (average mu = 0.
+FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory
+----- Native stack trace -----
+
+ 1: 00007FF743FCAE1F void __cdecl node::OnFatalError(char const * __ptr64,char const * __ptr64)+1343
+ 2: 00007FF744C137B7 public: class v8::MaybeLocal<class v8::Object> __cdecl v8::Function::NewInstance(class v8::Local<class v8::Context>,int,class v8::Local<class v8::Value> * __ptr64 const)const __ptr64+423
+ 3: 00007FF744A13E77 private: __cdecl v8::base::AddressSpaceReservation::AddressSpaceReservation(void * __ptr64,unsigned __int64) __ptr64+322071
+ 4: 00007FF744A11B16 private: __cdecl v8::base::AddressSpaceReservation::AddressSpaceReservation(void * __ptr64,unsigned __int64) __ptr64+313014
+ 5: 00007FF744A95619 public: __cdecl v8::Unlocker::~Unlocker(void) __ptr64+9273
+ 6: 00007FF74460B398 public: __cdecl v8::String::Value::~Value(void) __ptr64+142680
+ 7: 000001B4A7E7733A 

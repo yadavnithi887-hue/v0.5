@@ -11,9 +11,10 @@ import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import { registry } from "@/modules/core/ExtensionRegistry";
+import { IDE_THEMES } from '@/lib/ideThemes';
 
 // Custom Styled Select Component with smooth animations
-const CustomSelect = ({ value, options, onChange }) => {
+const CustomSelect = ({ value, options, onChange, disabled = false }) => {
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef(null);
 
@@ -31,16 +32,19 @@ const CustomSelect = ({ value, options, onChange }) => {
   // Format display value (truncate long font names)
   const displayValue = (val) => {
     if (!val) return 'Select...';
-    if (val.length > 25) return val.substring(0, 22) + '...';
-    return val;
+    const themeOption = IDE_THEMES.find((theme) => theme.id === val);
+    const display = themeOption?.name || val;
+    if (display.length > 25) return display.substring(0, 22) + '...';
+    return display;
   };
 
   return (
     <div className="relative" ref={dropdownRef}>
       {/* Trigger Button */}
       <button
-        onClick={() => setIsOpen(!isOpen)}
-        className="group flex items-center justify-between gap-2 min-w-[180px] px-3 py-2 rounded-lg sp-input border text-sm font-medium transition-all duration-200 hover:border-blue-500/30 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+        onClick={() => !disabled && setIsOpen(!isOpen)}
+        disabled={disabled}
+        className={`group flex items-center justify-between gap-2 min-w-[180px] px-3 py-2 rounded-lg sp-input border text-sm font-medium transition-all duration-200 settings-select-trigger ${disabled ? 'opacity-60 cursor-not-allowed' : ''}`}
       >
         <span className="truncate sp-text">{displayValue(value)}</span>
         <ChevronDown
@@ -52,12 +56,7 @@ const CustomSelect = ({ value, options, onChange }) => {
       {/* Dropdown Menu */}
       {isOpen && (
         <div
-          className="absolute right-0 top-full mt-2 min-w-[220px] max-h-[280px] overflow-y-auto rounded-xl border shadow-xl z-50 animate-in fade-in slide-in-from-top-2 duration-200"
-          style={{
-            background: 'rgba(30, 30, 30, 0.95)',
-            backdropFilter: 'blur(20px)',
-            borderColor: 'rgba(255, 255, 255, 0.1)',
-          }}
+          className="absolute right-0 top-full mt-2 min-w-[220px] max-h-[280px] overflow-y-auto rounded-xl border shadow-xl z-50 animate-in fade-in slide-in-from-top-2 duration-200 settings-select-menu"
         >
           <div className="p-1">
             {options.map((opt, idx) => (
@@ -68,13 +67,13 @@ const CustomSelect = ({ value, options, onChange }) => {
                   setIsOpen(false);
                 }}
                 className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-left transition-all duration-150 ${value === opt
-                  ? 'bg-blue-500/20 text-blue-400'
-                  : 'text-white/80 hover:bg-white/10 hover:text-white'
+                  ? 'settings-select-option-active'
+                  : 'sp-text-secondary hover:sp-text sp-bg-hover'
                   }`}
               >
-                <span className="flex-1 truncate">{opt}</span>
+                <span className="flex-1 truncate">{displayValue(opt)}</span>
                 {value === opt && (
-                  <Check size={14} className="text-blue-400 flex-shrink-0" />
+                  <Check size={14} className="text-[var(--ide-accent)] flex-shrink-0" />
                 )}
               </button>
             ))}
@@ -87,6 +86,35 @@ const CustomSelect = ({ value, options, onChange }) => {
 
 // Complete settings schema with all categories
 const defaultSchema = {
+  workbench: {
+    icon: Layout,
+    label: 'Workbench',
+    description: 'Tune the workspace shell, layout, density, and startup behavior',
+    items: [
+      {
+        id: 'uiFontFamily',
+        label: 'Interface Font',
+        type: 'select',
+        options: [
+          '"Inter", "Segoe UI", system-ui, sans-serif',
+          '"IBM Plex Sans", "Segoe UI", sans-serif',
+          'system-ui, sans-serif',
+          '"Segoe UI", system-ui, sans-serif'
+        ],
+        desc: 'Choose a UI font for panels, controls, and workspace labels.',
+        default: '"Inter", "Segoe UI", system-ui, sans-serif'
+      },
+      { id: 'uiDensity', label: 'Density', type: 'select', options: ['compact', 'comfortable', 'relaxed'], desc: 'Adjust spacing across the workspace.', default: 'comfortable' },
+      { id: 'showWelcomeOnStartup', label: 'Welcome Screen On Startup', type: 'toggle', desc: 'Open the welcome screen when no file is active.', default: true },
+      { id: 'restoreRecentWorkspace', label: 'Restore Recent Workspace', type: 'toggle', desc: 'Re-open the most recent project context automatically.', default: true },
+      { id: 'commandCenter', label: 'Command Center', type: 'toggle', desc: 'Show command-centric actions in the workspace chrome.', default: true },
+      { id: 'sidebarPosition', label: 'Sidebar Position', type: 'select', options: ['left', 'right'], desc: 'Dock the sidebar on the left or right edge.', default: 'left' },
+      { id: 'statusBarVisible', label: 'Status Bar', type: 'toggle', desc: 'Show the status bar at the bottom.', default: true },
+      { id: 'showBreadcrumbs', label: 'Breadcrumbs', type: 'toggle', desc: 'Show file breadcrumbs above the editor.', default: true },
+      { id: 'reducedMotion', label: 'Reduced Motion', type: 'toggle', desc: 'Reduce animated transitions across the workspace.', default: false },
+      { id: 'largeClickTargets', label: 'Large Click Targets', type: 'toggle', desc: 'Increase hit area for buttons and workspace actions.', default: false }
+    ]
+  },
   editor: {
     icon: Type,
     label: 'Text Editor',
@@ -112,6 +140,9 @@ const defaultSchema = {
         desc: 'Choose your preferred coding font.',
         default: "'Fira Code', Consolas, monospace"
       },
+      { id: 'lineHeight', label: 'Line Height', type: 'number', desc: 'Controls vertical spacing between lines.', default: 22, min: 16, max: 40 },
+      { id: 'letterSpacing', label: 'Letter Spacing', type: 'number', desc: 'Fine tune editor character spacing.', default: 0, min: 0, max: 4 },
+      { id: 'fontLigatures', label: 'Font Ligatures', type: 'toggle', desc: 'Enable programming ligatures for supported fonts.', default: true },
       { id: 'tabSize', label: 'Tab Size', type: 'number', desc: 'The number of spaces a tab is equal to.', default: 2, min: 1, max: 8 },
       { id: 'wordWrap', label: 'Word Wrap', type: 'select', options: ['off', 'on', 'wordWrapColumn', 'bounded'], desc: 'Controls how lines should wrap.', default: 'off' },
       { id: 'lineNumbers', label: 'Line Numbers', type: 'select', options: ['on', 'off', 'relative', 'interval'], desc: 'Control the display of line numbers.', default: 'on' },
@@ -121,10 +152,17 @@ const defaultSchema = {
       { id: 'insertSpaces', label: 'Insert Spaces', type: 'toggle', desc: 'Insert spaces when pressing Tab.', default: true },
       { id: 'renderWhitespace', label: 'Render Whitespace', type: 'select', options: ['none', 'boundary', 'selection', 'trailing', 'all'], desc: 'Controls rendering of whitespace characters.', default: 'selection' },
       { id: 'smoothScrolling', label: 'Smooth Scrolling', type: 'toggle', desc: 'Enable smooth scrolling in editor.', default: true },
+      { id: 'mouseWheelZoom', label: 'Mouse Wheel Zoom', type: 'toggle', desc: 'Allow Ctrl/Cmd + wheel to zoom editor font size.', default: true },
+      { id: 'stickyScroll', label: 'Sticky Scroll', type: 'toggle', desc: 'Pin scope headers while scrolling long files.', default: false },
+      { id: 'quickSuggestions', label: 'Quick Suggestions', type: 'toggle', desc: 'Show suggestions as you type.', default: true },
+      { id: 'inlineSuggest', label: 'Inline Suggestions', type: 'toggle', desc: 'Show ghost-text style completions inline.', default: true },
+      { id: 'occurrencesHighlight', label: 'Occurrences Highlight', type: 'toggle', desc: 'Highlight related symbol usages in the editor.', default: true },
+      { id: 'links', label: 'Clickable Links', type: 'toggle', desc: 'Detect and open clickable links in content.', default: true },
       { id: 'formatOnSave', label: 'Format On Save', type: 'toggle', desc: 'Format the file on save.', default: false },
       { id: 'formatOnPaste', label: 'Format On Paste', type: 'toggle', desc: 'Format pasted content.', default: false },
       { id: 'bracketPairColorization', label: 'Bracket Pair Colorization', type: 'toggle', desc: 'Colorize matching bracket pairs.', default: true },
       { id: 'guidesIndentation', label: 'Indentation Guides', type: 'toggle', desc: 'Show indentation guide lines.', default: true },
+      { id: 'matchBrackets', label: 'Match Brackets', type: 'select', options: ['always', 'near', 'never'], desc: 'Controls bracket pair matching behavior.', default: 'always' },
       { id: 'autoClosingBrackets', label: 'Auto Closing Brackets', type: 'select', options: ['always', 'languageDefined', 'beforeWhitespace', 'never'], desc: 'Auto-close brackets when typing.', default: 'languageDefined' },
       { id: 'autoClosingQuotes', label: 'Auto Closing Quotes', type: 'select', options: ['always', 'languageDefined', 'beforeWhitespace', 'never'], desc: 'Auto-close quotes when typing.', default: 'languageDefined' },
     ]
@@ -140,7 +178,7 @@ const defaultSchema = {
   appearance: {
     icon: Palette,
     label: 'Appearance',
-    description: 'Customize visual elements',
+    description: 'Customize visual elements and reading comfort',
     items: [
       { id: 'minimap', label: 'Show Minimap', type: 'toggle', desc: 'Controls whether the minimap is shown.', default: true },
       { id: 'minimapSide', label: 'Minimap Side', type: 'select', options: ['right', 'left'], desc: 'Position of the minimap.', default: 'right' },
@@ -150,10 +188,8 @@ const defaultSchema = {
       { id: 'folding', label: 'Code Folding', type: 'toggle', desc: 'Enable code folding.', default: true },
       { id: 'foldingHighlight', label: 'Folding Highlight', type: 'toggle', desc: 'Highlight folded code regions.', default: true },
       { id: 'renderLineHighlight', label: 'Current Line Highlight', type: 'select', options: ['none', 'line', 'gutter', 'all'], desc: 'Controls how current line is highlighted.', default: 'line' },
-      { id: 'showBreadcrumbs', label: 'Breadcrumbs', type: 'toggle', desc: 'Show file path breadcrumbs above editor.', default: true },
-      { id: 'activityBarVisible', label: 'Activity Bar', type: 'toggle', desc: 'Show activity bar on the side.', default: true },
-      { id: 'statusBarVisible', label: 'Status Bar', type: 'toggle', desc: 'Show status bar at the bottom.', default: true },
-      { id: 'sidebarPosition', label: 'Sidebar Position', type: 'select', options: ['left', 'right'], desc: 'Position of the sidebar.', default: 'left' },
+      { id: 'commandPalettePreserveInput', label: 'Preserve Command Input', type: 'toggle', desc: 'Keep recent command palette input during the session.', default: true },
+      { id: 'explorerConfirmDragAndDrop', label: 'Confirm Drag And Drop', type: 'toggle', desc: 'Ask before moving files with drag and drop.', default: false },
     ]
   },
 
@@ -188,11 +224,14 @@ const defaultSchema = {
           "'Ubuntu Mono', monospace"
         ], desc: 'Terminal font family.', default: "'Fira Code', monospace"
       },
+      { id: 'terminalLineHeight', label: 'Line Height', type: 'number', desc: 'Adjust spacing between terminal rows.', default: 1, min: 1, max: 2 },
       { id: 'terminalCursorBlinking', label: 'Cursor Blinking', type: 'toggle', desc: 'Enable cursor blinking in terminal.', default: true },
       { id: 'terminalCursorStyle', label: 'Cursor Style', type: 'select', options: ['block', 'underline', 'bar'], desc: 'Terminal cursor style.', default: 'block' },
+      { id: 'terminalCursorWidth', label: 'Cursor Width', type: 'number', desc: 'Cursor width for bar and line cursors.', default: 2, min: 1, max: 6 },
       { id: 'terminalScrollback', label: 'Scrollback Lines', type: 'number', desc: 'Maximum lines to keep in terminal history.', default: 1000, min: 100, max: 10000 },
       { id: 'terminalCopyOnSelection', label: 'Copy On Selection', type: 'toggle', desc: 'Automatically copy selected text.', default: false },
       { id: 'terminalBellSound', label: 'Bell Sound', type: 'toggle', desc: 'Play bell sound for terminal alerts.', default: false },
+      { id: 'terminalRendererType', label: 'Renderer', type: 'select', options: ['canvas', 'dom'], desc: 'Choose terminal rendering mode.', default: 'canvas' },
     ]
   },
 
@@ -215,6 +254,7 @@ const defaultSchema = {
     items: [
       { id: 'telemetryEnabled', label: 'Telemetry', type: 'toggle', desc: 'Allow sending anonymous usage data.', default: false },
       { id: 'crashReporter', label: 'Crash Reporter', type: 'toggle', desc: 'Send crash reports to improve the app.', default: false },
+      { id: 'privacyMaskPaths', label: 'Mask Workspace Paths', type: 'toggle', desc: 'Hide full local paths in user-facing surfaces where possible.', default: true },
     ]
   },
 
@@ -240,9 +280,11 @@ const defaultSchema = {
   }
 };
 
+const THEME_EXTENSION_ID = 'devstudio.theme-picker';
+
 export default function SettingsPanel({ settings, onSave, onSettingChange }) {
   const [schema, setSchema] = useState(defaultSchema);
-  const [activeCat, setActiveCat] = useState('editor');
+  const [activeCat, setActiveCat] = useState('workbench');
   const [localSettings, setLocalSettings] = useState(settings);
   const [search, setSearch] = useState('');
   const [hasChanges, setHasChanges] = useState(false);
@@ -256,13 +298,21 @@ export default function SettingsPanel({ settings, onSave, onSettingChange }) {
   const [gatewayConfig, setGatewayConfig] = useState({ botToken: '', chatId: '', model: 'google-antigravity/gemini-3-flash' });
   const [authLoading, setAuthLoading] = useState(false);
   const [configLoading, setConfigLoading] = useState(false);
+  const [modalSaving, setModalSaving] = useState(false);
 
   // Antigravity Auth State
   const [manualAuthUrl, setManualAuthUrl] = useState('');
   const [pastedUrl, setPastedUrl] = useState('');
+  const [callbackServerStarted, setCallbackServerStarted] = useState(true);
   const [clientIdInput, setClientIdInput] = useState('1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com');
   const [clientSecretInput, setClientSecretInput] = useState('');
   const [hasSavedClientSecret, setHasSavedClientSecret] = useState(false);
+  const [modalConfig, setModalConfig] = useState({
+    apiKey: '',
+    endpoint: 'https://api.us-west-2.modal.direct/v1/chat/completions',
+    model: 'zai-org/GLM-5-FP8'
+  });
+  const [modalConfigured, setModalConfigured] = useState(false);
 
   // Telegram Config State
   const [telegramConfigured, setTelegramConfigured] = useState({ isConfigured: false, maskedToken: null, chatId: null });
@@ -283,6 +333,18 @@ export default function SettingsPanel({ settings, onSave, onSettingChange }) {
       .then((cfg) => {
         if (cfg?.clientId) setClientIdInput(cfg.clientId);
         setHasSavedClientSecret(!!cfg?.hasClientSecret);
+      })
+      .catch(() => { });
+    fetch('http://localhost:3001/api/provider/modal-config')
+      .then(r => r.json())
+      .then((cfg) => {
+        setModalConfigured(!!cfg?.hasApiKey);
+        setModalConfig((prev) => ({
+          ...prev,
+          endpoint: cfg?.endpoint || prev.endpoint,
+          model: cfg?.model || prev.model,
+          apiKey: ''
+        }));
       })
       .catch(() => { });
     fetch('http://localhost:3001/api/gateway/status').then(r => r.json()).then(data => {
@@ -308,6 +370,7 @@ export default function SettingsPanel({ settings, onSave, onSettingChange }) {
             setAuthState(s);
             setManualAuthUrl('');
             setPastedUrl('');
+            setCallbackServerStarted(true);
             setAuthLoading(false);
             toast.success("Successfully authenticated!");
           }
@@ -330,21 +393,67 @@ export default function SettingsPanel({ settings, onSave, onSettingChange }) {
     }));
   };
 
+  const isThemeExtensionEnabled = () => {
+    const themeExtension = registry.getAllExtensions().find((ext) => ext.id === THEME_EXTENSION_ID);
+    return themeExtension?.enabled !== false;
+  };
+
   const handleChange = (key, value) => {
-    setLocalSettings(prev => ({ ...prev, [key]: value }));
+    if (key === 'themeSource' && value === 'extension' && !isThemeExtensionEnabled()) {
+      toast.error('Theme Picker extension is disabled. Enable it before using extension themes.');
+      return;
+    }
+
+    const nextSettings = {
+      ...localSettings,
+      [key]: value
+    };
+
+    if (key === 'ideTheme') {
+      nextSettings.themeSource = 'settings';
+      window.dispatchEvent(new CustomEvent('devstudio:theme-source-change', {
+        detail: { source: 'settings', themeId: value }
+      }));
+    }
+
+    if (key === 'themeSource') {
+      if (value === 'extension') {
+        const extensionThemeId = localStorage.getItem('devstudio-extension-theme') || localStorage.getItem('devstudio-theme') || localSettings.ideTheme;
+        window.dispatchEvent(new CustomEvent('devstudio:theme-source-change', {
+          detail: { source: 'extension', themeId: extensionThemeId }
+        }));
+      } else {
+        window.dispatchEvent(new CustomEvent('devstudio:theme-source-change', {
+          detail: { source: 'settings', themeId: nextSettings.ideTheme }
+        }));
+      }
+    }
+
+    setLocalSettings(nextSettings);
     setHasChanges(true);
     if (onSettingChange) {
       onSettingChange(key, value);
+      if (key === 'ideTheme') {
+        onSettingChange('themeSource', 'settings');
+      }
     }
   };
 
   const handleSave = async () => {
     setIsSaving(true);
     await new Promise(r => setTimeout(r, 500));
+    if (localSettings.themeSource === 'settings') {
+      localStorage.removeItem('devstudio-extension-theme');
+      window.dispatchEvent(new CustomEvent('devstudio:theme-source-change', {
+        detail: { source: 'settings', themeId: localSettings.ideTheme }
+      }));
+    }
     onSave(localSettings);
     setHasChanges(false);
     setIsSaving(false);
-    toast.success("Settings saved successfully!");
+    toast.success("Preferences updated", {
+      description: `Theme: ${IDE_THEMES.find((theme) => theme.id === localSettings.ideTheme)?.name || 'Current'} • Workspace settings saved cleanly.`
+    });
   };
 
   const toggleExtension = (extensionId) => {
@@ -378,6 +487,47 @@ export default function SettingsPanel({ settings, onSave, onSettingChange }) {
       toast.error("Error saving gateway config");
     } finally {
       setConfigLoading(false);
+    }
+  };
+
+  const handleSaveModalConfig = async () => {
+    setModalSaving(true);
+    try {
+      const res = await fetch('http://localhost:3001/api/provider/modal-config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...(modalConfig.apiKey ? { apiKey: modalConfig.apiKey } : {}),
+          endpoint: modalConfig.endpoint,
+          model: modalConfig.model,
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        toast.success('Modal provider config saved!');
+        setModalConfigured(true);
+        setModalConfig((p) => ({ ...p, apiKey: '' }));
+      } else {
+        toast.error("Failed to save Modal config: " + data.error);
+      }
+    } catch (e) {
+      toast.error("Error saving Modal config");
+    } finally {
+      setModalSaving(false);
+    }
+  };
+
+  const parseRedirectUrl = (input) => {
+    const value = String(input || '').trim();
+    if (!value) return {};
+    try {
+      const url = new URL(value);
+      return {
+        code: url.searchParams.get('code') ?? undefined,
+        state: url.searchParams.get('state') ?? undefined,
+      };
+    } catch {
+      return {};
     }
   };
 
@@ -455,8 +605,13 @@ export default function SettingsPanel({ settings, onSave, onSettingChange }) {
                       }).then(r => r.json()).then(data => {
                         if (data.authURL) {
                           setManualAuthUrl(data.authURL);
+                          setCallbackServerStarted(data.callbackServerStarted !== false);
                           window.open(data.authURL, '_blank');
-                          toast.info("Browser opened for Google OAuth. Complete sign-in and return to IDE.");
+                          if (data.callbackServerStarted === false) {
+                            toast.warning("Local callback server could not start. Use manual URL paste to complete login.");
+                          } else {
+                            toast.info("Browser opened for Google OAuth. Complete sign-in and return to IDE.");
+                          }
                         } else {
                           toast.error("Backend error: " + (data.error || 'Unknown response'));
                         }
@@ -474,6 +629,13 @@ export default function SettingsPanel({ settings, onSave, onSettingChange }) {
               </div>
             ) : (
               <div className="space-y-4 animate-in fade-in slide-in-from-top-2">
+                <div className="text-xs text-amber-300 bg-amber-500/10 border border-amber-500/20 p-3 rounded">
+                  If browser shows an error on localhost, copy the full URL from the browser address bar and paste it below.
+                  {!callbackServerStarted && (
+                    <span className="block mt-1">Local callback server is unavailable, so manual paste is required for this login.</span>
+                  )}
+                </div>
+
                 <div>
                   <label className="text-xs text-zinc-500 block mb-1">1. Copy/Open Auth URL:</label>
                   <div className="flex gap-2">
@@ -502,7 +664,7 @@ export default function SettingsPanel({ settings, onSave, onSettingChange }) {
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={() => { setManualAuthUrl(''); setPastedUrl(''); }}
+                    onClick={() => { setManualAuthUrl(''); setPastedUrl(''); setCallbackServerStarted(true); }}
                     className="text-xs"
                   >
                     Cancel
@@ -510,6 +672,8 @@ export default function SettingsPanel({ settings, onSave, onSettingChange }) {
                   <Button
                     onClick={() => {
                       if (!pastedUrl) return toast.error("Please paste the URL first");
+                      const parsed = parseRedirectUrl(pastedUrl);
+                      if (!parsed.code) return toast.error("No code found in pasted URL.");
                       setAuthLoading(true);
                       fetch('http://localhost:3001/api/auth/manual-callback', {
                         method: 'POST',
@@ -520,6 +684,7 @@ export default function SettingsPanel({ settings, onSave, onSettingChange }) {
                           toast.success("Successfully authenticated!");
                           setManualAuthUrl('');
                           setPastedUrl('');
+                          setCallbackServerStarted(true);
                           // Refresh status
                           fetch('http://localhost:3001/api/auth/status').then(r => r.json()).then(setAuthState);
                         } else {
@@ -539,6 +704,68 @@ export default function SettingsPanel({ settings, onSave, onSettingChange }) {
             )}
           </div>
         )}
+      </div>
+
+      <div className="p-5 rounded-xl sp-border border sp-bg-active">
+        <h4 className="text-sm font-semibold sp-text mb-3 flex items-center gap-2">
+          <Brain size={16} className="text-cyan-400" />
+          Modal GLM Provider
+        </h4>
+        <p className="text-xs sp-text-secondary mb-4">
+          Add your Modal API key to use GLM models directly in chat alongside Antigravity.
+        </p>
+
+        {modalConfigured && (
+          <div className="flex items-center gap-3 bg-green-500/10 border border-green-500/20 p-3 rounded-lg mb-4">
+            <CheckCircle2 size={18} className="text-green-500" />
+            <div className="flex-1">
+              <p className="text-sm font-medium text-green-400">Configured</p>
+              <p className="text-xs text-green-300/70">API key is saved locally</p>
+            </div>
+          </div>
+        )}
+
+        <div className="space-y-3">
+          <div>
+            <label className="text-xs font-medium sp-text-secondary block mb-1.5">Modal API Key</label>
+            <input
+              type="password"
+              value={modalConfig.apiKey}
+              onChange={(e) => setModalConfig((p) => ({ ...p, apiKey: e.target.value }))}
+              placeholder={modalConfigured ? "Leave blank to keep saved key" : "modal_..."}
+              className="w-full sp-input border rounded px-3 py-1.5 text-xs font-mono"
+            />
+          </div>
+
+          <div>
+            <label className="text-xs font-medium sp-text-secondary block mb-1.5">Endpoint</label>
+            <input
+              type="text"
+              value={modalConfig.endpoint}
+              onChange={(e) => setModalConfig((p) => ({ ...p, endpoint: e.target.value }))}
+              className="w-full sp-input border rounded px-3 py-1.5 text-xs font-mono"
+            />
+          </div>
+
+          <div>
+            <label className="text-xs font-medium sp-text-secondary block mb-1.5">Default GLM Model</label>
+            <CustomSelect
+              value={modalConfig.model}
+              options={['zai-org/GLM-5-FP8', 'zai-org/GLM-5-Air']}
+              onChange={(val) => setModalConfig((p) => ({ ...p, model: val }))}
+            />
+          </div>
+
+          <div className="pt-1 flex justify-end">
+            <Button
+              onClick={handleSaveModalConfig}
+              disabled={modalSaving}
+              className="bg-cyan-600 hover:bg-cyan-700 text-white h-8 text-xs"
+            >
+              {modalSaving ? 'Saving...' : 'Save Modal Config'}
+            </Button>
+          </div>
+        </div>
       </div>
 
       <div className="p-5 rounded-xl sp-border border sp-bg-active">
@@ -604,7 +831,18 @@ export default function SettingsPanel({ settings, onSave, onSettingChange }) {
             <label className="text-xs font-medium sp-text-secondary block mb-1.5">AI Model</label>
             <CustomSelect
               value={gatewayConfig.model}
-              options={['gemini-3-flash', 'gemini-3-pro-high', 'gemini-3-pro-low', 'claude-sonnet-4.6', 'claude-opus-4.6', 'gpt-oss-120b']}
+              options={[
+                'gemini-3.1-pro-high',
+                'gemini-3.1-pro-low',
+                'gemini-3-flash',
+                'claude-opus-4-6-thinking',
+                'claude-opus-4-6',
+                'claude-opus-4-5-thinking',
+                'claude-sonnet-4-5',
+                'gpt-oss-*',
+                'zai-org/GLM-5-FP8',
+                'zai-org/GLM-5-Air'
+              ]}
               onChange={(val) => setGatewayConfig(p => ({ ...p, model: val }))}
             />
           </div>
@@ -629,14 +867,20 @@ export default function SettingsPanel({ settings, onSave, onSettingChange }) {
     const val = localSettings[item.id] !== undefined
       ? localSettings[item.id]
       : (item.default !== undefined ? item.default : '');
+    const isSettingsThemeLocked = item.id === 'ideTheme' && localSettings.themeSource === 'extension';
+    const isThemeExtensionAvailable = isThemeExtensionEnabled();
 
     if (item.type === 'toggle') {
       return (
-        <Switch
-          checked={!!val}
-          onCheckedChange={c => handleChange(item.id, c)}
-          className="data-[state=checked]:bg-blue-500"
-        />
+        <div className="settings-toggle-shell">
+          <span className={`settings-toggle-label ${val ? 'is-active' : ''}`}>On</span>
+          <Switch
+            checked={!!val}
+            onCheckedChange={c => handleChange(item.id, c)}
+            className="settings-switch"
+          />
+          <span className={`settings-toggle-label ${!val ? 'is-active' : ''}`}>Off</span>
+        </div>
       );
     }
 
@@ -649,7 +893,7 @@ export default function SettingsPanel({ settings, onSave, onSettingChange }) {
             max={item.max || 100}
             value={val}
             onChange={e => handleChange(item.id, parseInt(e.target.value))}
-            className="w-24 h-1 rounded-full appearance-none cursor-pointer sp-input [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-blue-500 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:cursor-pointer"
+            className="w-28 h-2 rounded-full appearance-none cursor-pointer sp-input settings-range"
           />
           <input
             type="number"
@@ -657,19 +901,56 @@ export default function SettingsPanel({ settings, onSave, onSettingChange }) {
             max={item.max}
             value={val}
             onChange={e => handleChange(item.id, parseInt(e.target.value) || item.min || 0)}
-            className="w-16 sp-input border rounded-lg px-2 py-1 text-sm outline-none focus:border-blue-500/50 transition-colors"
+            className="w-16 sp-input border rounded-lg px-2 py-1 text-sm outline-none transition-colors settings-input-field"
           />
         </div>
       );
     }
 
     if (item.type === 'select') {
+      if (item.id === 'themeSource') {
+        return (
+          <div className="flex flex-col items-end gap-2">
+            <div className="settings-source-switch">
+            {['settings', 'extension'].map((source) => {
+              const active = val === source;
+              const disabled = source === 'extension' && !isThemeExtensionAvailable;
+              return (
+                <button
+                  key={source}
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => !disabled && handleChange(item.id, source)}
+                  className={`settings-source-option ${active ? 'is-active' : ''} ${disabled ? 'is-disabled' : ''}`}
+                >
+                  {source === 'settings' ? 'Settings' : 'Extension'}
+                </button>
+              );
+            })}
+            </div>
+            {!isThemeExtensionAvailable && (
+              <span className="text-[11px] sp-text-muted">
+                Theme Picker extension is disabled, so settings themes are active automatically.
+              </span>
+            )}
+          </div>
+        );
+      }
+
       return (
-        <CustomSelect
-          value={val}
-          options={item.options || []}
-          onChange={(v) => handleChange(item.id, v)}
-        />
+        <div className="flex flex-col items-end gap-2">
+          <CustomSelect
+            value={val}
+            options={item.options || []}
+            onChange={(v) => handleChange(item.id, v)}
+            disabled={isSettingsThemeLocked}
+          />
+          {isSettingsThemeLocked && (
+            <span className="text-[11px] sp-text-muted">
+              Extension theme is active. Switch Theme Control back to `settings`.
+            </span>
+          )}
+        </div>
       );
     }
 
@@ -692,7 +973,7 @@ export default function SettingsPanel({ settings, onSave, onSettingChange }) {
         type={item.type === 'password' ? 'password' : 'text'}
         value={val}
         onChange={e => handleChange(item.id, e.target.value)}
-        className="sp-input border rounded-lg px-3 py-1.5 text-sm outline-none focus:border-blue-500/50 transition-colors w-64"
+        className="sp-input border rounded-lg px-3 py-1.5 text-sm outline-none transition-colors w-64 settings-input-field"
         placeholder={item.desc}
       />
     );
@@ -748,7 +1029,7 @@ export default function SettingsPanel({ settings, onSave, onSettingChange }) {
                   </p>
                   <div className="flex items-center gap-3 text-xs sp-text-muted">
                     <span>v{ext.version || '1.0.0'}</span>
-                    {ext.author && <span>• {ext.author}</span>}
+                    {ext.author && <span>Ã¢â‚¬Â¢ {ext.author}</span>}
                   </div>
                 </div>
 
@@ -841,71 +1122,134 @@ export default function SettingsPanel({ settings, onSave, onSettingChange }) {
     return filtered;
   }, [schema, search]);
 
+  const categoryEntries = Object.entries(filteredSchema);
+  const activeCategory = filteredSchema[activeCat];
+  const visibleSettingsCount = categoryEntries.reduce((count, [, category]) => {
+    return count + (category.items?.length || 0);
+  }, 0);
+
+  useEffect(() => {
+    if (!activeCategory && categoryEntries.length > 0) {
+      setActiveCat(categoryEntries[0][0]);
+    }
+  }, [activeCategory, categoryEntries]);
+
   return (
     <div className="settings-panel h-full flex flex-col overflow-hidden">
-      {/* Glass Header */}
-      <div className="settings-panel-header p-4 sp-border border-b flex-shrink-0">
-        <h2 className="text-xs font-bold uppercase tracking-wider sp-text-muted mb-3">Settings</h2>
-        <div className="flex items-center rounded-xl px-3 py-2 sp-input border">
-          <Search size={14} className="sp-text-muted" />
-          <input
-            className="bg-transparent border-none text-sm px-2 py-0.5 flex-1 outline-none sp-text placeholder:sp-text-muted"
-            placeholder="Search settings..."
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-          />
-          {search && (
-            <button
-              onClick={() => setSearch('')}
-              className="sp-text-muted hover:sp-text transition-colors"
-            >
-              <X size={14} />
-            </button>
-          )}
+      <div className="settings-panel-header px-6 py-5 sp-border border-b flex-shrink-0">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+          <div className="space-y-1">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.22em] sp-text-muted">
+              Preferences
+            </p>
+            <div className="flex items-center gap-3">
+              <h2 className="text-[26px] font-semibold tracking-tight sp-text">Settings</h2>
+              <span className="settings-muted-chip">
+                {categoryEntries.length} sections
+              </span>
+            </div>
+            <p className="max-w-2xl text-sm sp-text-secondary">
+              Keep configuration calm, predictable, and focused on developer workflows instead of visual noise.
+            </p>
+          </div>
+
+          <div className="flex w-full flex-col gap-3 lg:w-[420px]">
+            <div className="flex items-center rounded-2xl px-4 py-3 sp-input border settings-search-shell">
+              <Search size={16} className="sp-text-muted" />
+              <input
+                className="bg-transparent border-none text-sm px-3 py-0.5 flex-1 outline-none sp-text placeholder:sp-text-muted"
+                placeholder="Search settings, categories, or extensions"
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+              />
+              {search && (
+                <button
+                  onClick={() => setSearch('')}
+                  className="sp-text-muted hover:sp-text transition-colors"
+                >
+                  <X size={14} />
+                </button>
+              )}
+            </div>
+            <div className="flex items-center justify-between text-xs sp-text-muted">
+              <span>{visibleSettingsCount} visible options</span>
+              <span>{hasChanges ? 'Unsaved changes' : 'All changes saved'}</span>
+            </div>
+          </div>
         </div>
       </div>
 
       <div className="flex flex-1 overflow-hidden">
-        {/* Sidebar Navigation */}
-        <div className="settings-panel-sidebar w-52 sp-border border-r overflow-y-auto py-2 flex-shrink-0">
-          {Object.entries(filteredSchema).map(([key, cat]) => (
+        <div className="settings-panel-sidebar w-[280px] sp-border border-r overflow-y-auto p-3 flex-shrink-0">
+          <div className="mb-3 px-3 pt-2">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] sp-text-muted">
+              Sections
+            </p>
+          </div>
+          {categoryEntries.map(([key, cat]) => (
             <div
               key={key}
               onClick={() => setActiveCat(key)}
-              className={`flex items-center gap-3 px-4 py-2.5 mx-2 rounded-lg cursor-pointer transition-all duration-150 ${activeCat === key
-                ? 'sp-bg-active sp-text'
-                : 'sp-text-secondary sp-bg-hover'
+              className={`settings-nav-item mx-1 mb-1.5 cursor-pointer transition-all duration-150 ${activeCat === key
+                ? 'is-active'
+                : ''
                 }`}
             >
-              <cat.icon size={16} className={activeCat === key ? 'text-blue-500' : ''} />
-              <span className="text-sm font-medium">{cat.label}</span>
-              {activeCat === key && (
-                <ChevronRight size={14} className="ml-auto text-blue-500" />
-              )}
+              <div className={`settings-nav-icon ${activeCat === key ? 'is-active' : ''}`}>
+                <cat.icon size={16} />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium sp-text">{cat.label}</p>
+                <p className="truncate text-xs sp-text-muted">
+                  {cat.items?.length ? `${cat.items.length} options` : cat.description}
+                </p>
+              </div>
+              <ChevronRight
+                size={14}
+                className={`transition-all ${activeCat === key ? 'translate-x-0 opacity-100 text-blue-400' : '-translate-x-1 opacity-0 sp-text-muted'}`}
+              />
             </div>
           ))}
         </div>
 
-        {/* Content Area */}
         <div className="flex-1 overflow-y-auto">
-          {/* Category Header */}
-          <div className="settings-panel-content-header sticky top-0 z-10 px-6 py-4 sp-border border-b">
-            <div className="flex justify-between items-center">
-              <div>
-                <h3 className="text-lg font-semibold sp-text flex items-center gap-2">
-                  {React.createElement(filteredSchema[activeCat]?.icon || Info, { size: 20, className: 'text-blue-500' })}
-                  {filteredSchema[activeCat]?.label}
-                </h3>
-                <p className="text-xs sp-text-muted mt-0.5">
-                  {filteredSchema[activeCat]?.description}
-                </p>
+          <div className="settings-panel-content-header sticky top-0 z-10 px-6 py-5 sp-border border-b">
+            <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+              <div className="space-y-3">
+                <div className="flex items-center gap-3">
+                  <div className="settings-section-icon">
+                    {React.createElement(activeCategory?.icon || Info, { size: 18 })}
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-semibold sp-text">
+                      {activeCategory?.label}
+                    </h3>
+                    <p className="text-sm sp-text-muted">
+                      {activeCategory?.description}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="settings-muted-chip">
+                    {activeCategory?.items?.length || 0} options
+                  </span>
+                  <span className="settings-muted-chip">
+                    Developer-first defaults
+                  </span>
+                  {hasChanges && (
+                    <span className="settings-accent-chip">
+                      Pending changes
+                    </span>
+                  )}
+                </div>
               </div>
+
               {activeCat !== 'accounts' && activeCat !== 'extensionsManage' && activeCat !== 'aiGateway' && (
                 <button
                   onClick={handleSave}
                   disabled={!hasChanges || isSaving}
-                  className={`h-9 px-4 text-sm font-medium rounded-lg transition-all duration-200 flex items-center gap-2 ${hasChanges
-                    ? 'bg-blue-500 hover:bg-blue-600 text-white shadow-lg shadow-blue-500/25'
+                  className={`h-10 px-4 text-sm font-medium rounded-xl transition-all duration-200 flex items-center gap-2 ${hasChanges
+                    ? 'settings-save-btn'
                     : 'sp-btn cursor-not-allowed opacity-50'
                     }`}
                 >
@@ -925,7 +1269,6 @@ export default function SettingsPanel({ settings, onSave, onSettingChange }) {
             </div>
           </div>
 
-          {/* Settings Content */}
           <div className="p-6">
             {activeCat === 'aiGateway' ? (
               renderAIGatewaySettings()
@@ -957,11 +1300,26 @@ export default function SettingsPanel({ settings, onSave, onSettingChange }) {
                 <p className="text-sm sp-text-muted">No settings available in this category</p>
               </div>
             ) : (
-              <div className="space-y-1">
-                {filteredSchema[activeCat]?.items.map((item, idx) => (
+              <div className="space-y-6">
+                <div className="settings-section-card">
+                  <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <h4 className="text-sm font-semibold sp-text">Section overview</h4>
+                      <p className="text-sm sp-text-muted">
+                        Adjust only what changes developer ergonomics, readability, or behavior.
+                      </p>
+                    </div>
+                    <span className="text-xs sp-text-muted">
+                      Use search to jump across categories
+                    </span>
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                {filteredSchema[activeCat]?.items.map((item) => (
                   <div
                     key={item.id}
-                    className="group flex items-center justify-between p-4 rounded-xl sp-bg-hover transition-all duration-150"
+                    className="settings-form-card group"
                   >
                     <div className="flex-1 min-w-0 pr-4">
                       <label className="text-sm font-medium sp-text block mb-0.5">
@@ -974,11 +1332,12 @@ export default function SettingsPanel({ settings, onSave, onSettingChange }) {
                       </label>
                       <p className="text-xs sp-text-muted leading-relaxed">{item.desc}</p>
                     </div>
-                    <div className="flex-shrink-0">
+                    <div className="settings-control-shell flex-shrink-0">
                       {renderControl(item)}
                     </div>
                   </div>
                 ))}
+                </div>
               </div>
             )}
           </div>

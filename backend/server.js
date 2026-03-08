@@ -1,6 +1,15 @@
 // backend/server.js
-// Unified Backend — IDE Agent + AI Gateway + Auth
+// Unified Backend - IDE Agent + AI Gateway + Auth
 // This is the heart of DevStudio AI
+
+// Load environment variables from backend/.env BEFORE anything else
+import { config as loadEnv } from 'dotenv';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+loadEnv({ path: path.join(__dirname, '.env') });
 
 import express from 'express';
 import http from 'http';
@@ -33,7 +42,10 @@ const io = new Server(server, {
         origin: ['http://localhost:5173', 'http://localhost:4173'],
         methods: ['GET', 'POST'],
         credentials: true
-    }
+    },
+    // Keep long-running AI/tool sessions alive during heavy operations.
+    pingInterval: 25000,
+    pingTimeout: 120000,
 });
 
 app.use(cors());
@@ -47,6 +59,10 @@ const memoryEngine = new MemoryEngine(tokenManager);
 const sessionManager = new SessionManager(memoryEngine);
 const aiBrain = new AIBrain(tokenManager, toolRouter, io);
 const gatewayManager = new GatewayManager(aiBrain, sessionManager, tokenManager, io, toolRouter);
+const bootGatewayConfig = tokenManager.getGatewayConfig();
+if (bootGatewayConfig?.model) {
+    aiBrain.setModel(bootGatewayConfig.model);
+}
 
 // ==================== REST API Routes ====================
 
@@ -99,8 +115,8 @@ app.post('/api/auth/use-profile', (req, res) => {
 app.get('/api/auth/config', (req, res) => {
     const appConfig = tokenManager.getAppConfig();
     res.json({
-        clientId: appConfig.clientId || '',
-        hasClientSecret: !!appConfig.clientSecret,
+        clientId: appConfig.clientId || process.env.GOOGLE_CLIENT_ID || '',
+        hasClientSecret: !!(appConfig.clientSecret || process.env.GOOGLE_CLIENT_SECRET),
     });
 });
 
@@ -123,8 +139,8 @@ app.post('/api/auth/start', async (req, res) => {
     try {
         const { clientId, clientSecret } = req.body;
         // clientId/clientSecret are optional; missing values are loaded from saved config or env
-        const { authURL, port } = await googleOAuth.startAuthFlow(clientId, clientSecret);
-        res.json({ authURL, port, message: 'Open the URL in your browser to sign in' });
+        const { authURL, port, callbackServerStarted } = await googleOAuth.startAuthFlow(clientId, clientSecret);
+        res.json({ authURL, port, callbackServerStarted, message: 'Open the URL in your browser to sign in' });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -150,6 +166,37 @@ app.post('/api/auth/logout', (req, res) => {
     res.json({ success: true, message: 'Logged out successfully' });
 });
 
+// --- Provider Routes ---
+
+// Get Modal provider config (API key masked via hasApiKey flag only)
+app.get('/api/provider/modal-config', (req, res) => {
+    try {
+        const cfg = tokenManager.getModalConfig();
+        res.json({
+            hasApiKey: !!cfg?.apiKey,
+            endpoint: cfg?.endpoint || 'https://api.us-west-2.modal.direct/v1/chat/completions',
+            model: cfg?.model || 'zai-org/GLM-5-FP8'
+        });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// Save Modal provider config
+app.post('/api/provider/modal-config', (req, res) => {
+    try {
+        const { apiKey, endpoint, model } = req.body || {};
+        tokenManager.saveModalConfig({
+            ...(apiKey !== undefined ? { apiKey: String(apiKey) } : {}),
+            ...(endpoint ? { endpoint: String(endpoint) } : {}),
+            ...(model ? { model: String(model) } : {}),
+        });
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
 // --- Gateway Routes ---
 
 // Get gateway status
@@ -165,6 +212,9 @@ app.post('/api/gateway/config', (req, res) => {
             return res.status(400).json({ error: 'botToken is required' });
         }
         tokenManager.saveGatewayConfig({ botToken, chatId, model });
+        if (model) {
+            aiBrain.setModel(model);
+        }
         res.json({ success: true, message: 'Gateway config saved' });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -271,7 +321,17 @@ app.get('/api/config', (req, res) => {
 // ==================== WebSocket Handling ====================
 
 io.on('connection', (socket) => {
-    console.log('[CLIENT] Connected:', socket.id);
+    const clientTag = String(socket.handshake?.query?.client || 'unknown');
+    const transport = socket.conn?.transport?.name || 'n/a';
+    console.log(`[CLIENT] Connected: ${socket.id} client=${clientTag} transport=${transport}`);
+
+    socket.conn?.on?.('upgrade', () => {
+        const nextTransport = socket.conn?.transport?.name || 'n/a';
+        console.log(`[CLIENT] Transport upgrade: ${socket.id} client=${clientTag} transport=${nextTransport}`);
+    });
+    socket.on('error', (err) => {
+        console.error(`[CLIENT] Socket error: ${socket.id} client=${clientTag} message=${err?.message || 'unknown'}`);
+    });
 
     // --- Existing: Tool execution ---
     socket.on('tool:execute', async (data) => {
@@ -286,8 +346,8 @@ io.on('connection', (socket) => {
     // --- NEW: Auth events ---
     socket.on('auth:start', async (data) => {
         try {
-            const { authURL, port } = await googleOAuth.startAuthFlow(data.clientId, data.clientSecret);
-            socket.emit('auth:url', { authURL, port });
+            const { authURL, port, callbackServerStarted } = await googleOAuth.startAuthFlow(data.clientId, data.clientSecret);
+            socket.emit('auth:url', { authURL, port, callbackServerStarted });
         } catch (err) {
             socket.emit('auth:error', { error: err.message });
         }
@@ -355,7 +415,7 @@ io.on('connection', (socket) => {
     // --- NEW: Direct IDE Chat (No Telegram required) ---
     socket.on('ide:chat', async (data) => {
         try {
-            const { message, workspacePath, chatId: incomingChatId } = data || {};
+            const { message, attachments, workspacePath, chatId: incomingChatId } = data || {};
             const chatId = incomingChatId || 'ide-local-session';
 
             // Get or create session
@@ -373,10 +433,10 @@ io.on('connection', (socket) => {
             }
 
             // Save user message to memory
-            await sessionManager.addMessage(chatId, 'user', message);
+            await sessionManager.addMessage(chatId, 'user', message, attachments);
 
             // Think and stream
-            const result = await aiBrain.think(message, context);
+            const result = await aiBrain.think(message, context, attachments);
 
             // Save AI response to memory
             await sessionManager.addMessage(chatId, 'assistant', result.response);
@@ -402,8 +462,9 @@ io.on('connection', (socket) => {
     });
 
     // --- Disconnection ---
-    socket.on('disconnect', () => {
-        console.log('[CLIENT] Disconnected:', socket.id);
+    socket.on('disconnect', (reason) => {
+        const transportNow = socket.conn?.transport?.name || 'n/a';
+        console.log(`[CLIENT] Disconnected: ${socket.id} client=${clientTag} reason=${reason} transport=${transportNow}`);
     });
 });
 
@@ -414,6 +475,7 @@ server.listen(PORT, () => {
     const authStatus = tokenManager.isAuthenticated() ? 'Authenticated' : 'Not authenticated';
     const gatewayConfig = tokenManager.getGatewayConfig();
     const botStatus = gatewayConfig?.botToken ? 'Configured' : 'Not configured';
+    const hasOAuthCreds = !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
 
     console.log('');
     console.log('========================================');
@@ -423,6 +485,7 @@ server.listen(PORT, () => {
     console.log(`  WebSocket: ws://localhost:${PORT}`);
     console.log('----------------------------------------');
     console.log(`  [AUTH]     ${authStatus}`);
+    console.log(`  [OAUTH]    ${hasOAuthCreds ? 'Credentials loaded from .env' : 'No .env credentials (will use saved config)'}`);
     console.log(`  [BOT]      ${botStatus}`);
     console.log('========================================');
     console.log('');

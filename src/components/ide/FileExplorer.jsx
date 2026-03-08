@@ -4,26 +4,27 @@ import {
   RefreshCw, Folder, File, Search
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { toast } from 'sonner';
 import {
   ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { getIconUrl } from '@/lib/fileIcons';
+import { getIconUrl, getMaterialIconUrl } from '@/lib/fileIcons';
+import { CachedFileIcon } from '@/components/ide/CachedFileIcon';
 import Timeline from './Timeline';
 import Outline from './Outline';
 
 // --- Icon Component ---
 const FileIcon = ({ filename, isFolder, isOpen }) => {
-  const iconUrl = getIconUrl(filename || '', isFolder, isOpen);
-
   return (
-    <img
-      src={iconUrl}
-      alt=""
-      className="w-4 h-4 flex-shrink-0 mr-2 select-none"
-      onError={(e) => {
-        e.target.style.display = 'none';
-        e.target.nextSibling.style.display = 'block';
-      }}
+    <CachedFileIcon
+      filename={filename}
+      isFolder={isFolder}
+      isOpen={isOpen}
+      size={16}
+      className={cn(
+        "w-4 h-4 flex-shrink-0 mr-2 select-none rounded-[2px]",
+        isFolder ? "explorer-node-icon-folder" : "explorer-node-icon-file"
+      )}
     />
   );
 };
@@ -87,7 +88,29 @@ const InlineInput = ({ type, onComplete, onCancel }) => {
 };
 
 // --- FILE ITEM ---
-const FileItem = ({ file, activeFile, onFileClick, renamingId, setRenamingId, onRenameFile, onDeleteFile }) => {
+const FileItem = ({
+  file,
+  activeFile,
+  onFileClick,
+  renamingId,
+  setRenamingId,
+  onRenameFile,
+  onDeleteFile,
+  onDuplicateFile,
+  onCopyRelativePath,
+  onRevealInOS,
+  onCopyItem,
+  onCutItem,
+  onPasteHere,
+  onDragStartItem,
+  onDragEndItem,
+  onNodeClick,
+  isSelected,
+  className,
+  gitStatus,
+  problemCount,
+  isDragging,
+}) => {
   const [newName, setNewName] = useState(file.name);
   const inputRef = useRef(null);
   const isRenaming = renamingId === file.id;
@@ -128,16 +151,22 @@ const FileItem = ({ file, activeFile, onFileClick, renamingId, setRenamingId, on
         <div
           className={cn(
             "explorer-item flex items-center py-1.5 px-2 cursor-pointer select-none transition-all duration-100 ml-5 rounded-md my-0.5",
-            isActive ? "explorer-item-active" : "explorer-item-hover"
+            isSelected && "explorer-item-selected",
+            isDragging && "opacity-45",
+            isActive ? "explorer-item-active" : "explorer-item-hover",
+            className
           )}
+          draggable={!isRenaming}
+          onDragStart={(e) => onDragStartItem?.(e, { type: 'file', file })}
+          onDragEnd={onDragEndItem}
           onClick={(e) => {
             e.stopPropagation();
-            if (!isRenaming) onFileClick(file);
+            const shouldContinue = onNodeClick ? onNodeClick(e, { type: 'file', node: file }) : true;
+            if (!isRenaming && shouldContinue) onFileClick(file);
           }}
         >
           <FileIcon filename={file.name} isFolder={false} />
           <File className="w-4 h-4 mr-2 explorer-icon hidden" />
-
           {isRenaming ? (
             <input
               ref={inputRef}
@@ -154,11 +183,38 @@ const FileItem = ({ file, activeFile, onFileClick, renamingId, setRenamingId, on
               className="explorer-input flex-1 text-xs h-5 px-1 rounded outline-none"
             />
           ) : (
-            <span className="text-[13px] truncate flex-1 select-none explorer-text">{file.name}</span>
+            <>
+              <span className={cn(
+                "text-[13px] leading-[1.2rem] truncate flex-1 select-none explorer-text",
+                gitStatus === 'U' ? 'git-text-untracked' : gitStatus === 'M' ? 'git-text-modified' : gitStatus === 'A' ? 'git-text-added' : gitStatus === 'D' ? 'git-text-deleted' : ''
+              )}>{file.name}</span>
+              {typeof problemCount === 'number' && problemCount > 0 && (
+                <span className="explorer-problem-badge">{problemCount}</span>
+              )}
+              {gitStatus && (
+                <span className={cn(
+                  "explorer-git-badge",
+                  gitStatus === 'U' ? 'is-untracked' : gitStatus === 'M' ? 'is-modified' : gitStatus === 'A' ? 'is-added' : 'is-deleted'
+                )} title={`Git: ${gitStatus}`}>{gitStatus}</span>
+              )}
+            </>
           )}
         </div>
       </ContextMenuTrigger>
       <ContextMenuContent className="explorer-context-menu w-48">
+        <ContextMenuItem onClick={() => onCopyItem?.({ type: 'file', node: file })} className="text-xs explorer-context-item">
+          <Copy size={14} className="mr-2" /> Copy
+        </ContextMenuItem>
+        <ContextMenuItem onClick={() => onCutItem?.({ type: 'file', node: file })} className="text-xs explorer-context-item">
+          <Copy size={14} className="mr-2" /> Cut
+        </ContextMenuItem>
+        <ContextMenuItem onClick={() => onPasteHere?.(cleanPath(file.folder || ''))} className="text-xs explorer-context-item">
+          <Folder size={14} className="mr-2" /> Paste
+        </ContextMenuItem>
+        <ContextMenuSeparator className="explorer-separator" />
+        <ContextMenuItem onClick={() => onDuplicateFile?.(file)} className="text-xs explorer-context-item">
+          <Copy size={14} className="mr-2" /> Duplicate
+        </ContextMenuItem>
         <ContextMenuItem onClick={() => setRenamingId(file.id)} className="text-xs explorer-context-item">
           <Edit3 size={14} className="mr-2" /> Rename
         </ContextMenuItem>
@@ -166,8 +222,14 @@ const FileItem = ({ file, activeFile, onFileClick, renamingId, setRenamingId, on
           <Trash2 size={14} className="mr-2" /> Delete
         </ContextMenuItem>
         <ContextMenuSeparator className="explorer-separator" />
+        <ContextMenuItem onClick={() => onCopyRelativePath?.(file)} className="text-xs explorer-context-item">
+          <Copy size={14} className="mr-2" /> Copy Relative Path
+        </ContextMenuItem>
         <ContextMenuItem onClick={() => navigator.clipboard.writeText(file.realPath)} className="text-xs explorer-context-item">
           <Copy size={14} className="mr-2" /> Copy Path
+        </ContextMenuItem>
+        <ContextMenuItem onClick={() => onRevealInOS?.(file.realPath)} className="text-xs explorer-context-item">
+          <Folder size={14} className="mr-2" /> Reveal in Explorer
         </ContextMenuItem>
       </ContextMenuContent>
     </ContextMenu>
@@ -184,7 +246,24 @@ const FolderItem = ({
   onRenameFolder,
   onDeleteFolder,
   renderTree,
-  startCreation
+  startCreation,
+  onDragStartItem,
+  onDragEndItem,
+  onDragOverTarget,
+  onDropTarget,
+  onDragLeaveTarget,
+  onCopyRelativePath,
+  onRevealInOS,
+  onCopyItem,
+  onCutItem,
+  onPasteHere,
+  onNodeClick,
+  isSelected,
+  className,
+  gitStatus,
+  problemCount,
+  isDragOver,
+  isDragging
 }) => {
   const [newName, setNewName] = useState(folder.name);
   const inputRef = useRef(null);
@@ -225,10 +304,23 @@ const FolderItem = ({
       <ContextMenu>
         <ContextMenuTrigger>
           <div
-            className="explorer-item flex items-center py-1.5 px-2 cursor-pointer select-none transition-all duration-100 explorer-item-hover group rounded-md my-0.5"
+            className={cn(
+              "explorer-item flex items-center py-1.5 px-2 cursor-pointer select-none transition-all duration-100 explorer-item-hover group rounded-md my-0.5",
+              isSelected && "explorer-item-selected",
+              isDragOver && "explorer-drop-target",
+              isDragging && "opacity-45",
+              className
+            )}
+            draggable={!isRenaming}
+            onDragStart={(e) => onDragStartItem?.(e, { type: 'folder', folder })}
+            onDragEnd={onDragEndItem}
+            onDragOver={(e) => onDragOverTarget?.(e, folder)}
+            onDragLeave={(e) => onDragLeaveTarget?.(e, folder)}
+            onDrop={(e) => onDropTarget?.(e, folder)}
             onClick={(e) => {
               e.stopPropagation();
-              if (!isRenaming) toggleFolder(folder.path);
+              const shouldContinue = onNodeClick ? onNodeClick(e, { type: 'folder', node: folder }) : true;
+              if (!isRenaming && shouldContinue) toggleFolder(folder.path);
             }}
           >
             <span className="mr-1 flex-shrink-0 explorer-chevron transition-transform duration-150">
@@ -254,9 +346,22 @@ const FolderItem = ({
                 className="explorer-input flex-1 text-xs h-5 px-1 rounded outline-none"
               />
             ) : (
-              <span className="text-[13px] truncate select-none flex-1 explorer-text font-medium">{folder.name}</span>
+              <>
+                <span className={cn(
+                  "text-[13px] leading-[1.2rem] truncate select-none flex-1 explorer-text",
+                  gitStatus ? (gitStatus === 'U' ? 'git-text-untracked' : gitStatus === 'M' ? 'git-text-modified' : 'git-text-added') : ''
+                )}>{folder.name}</span>
+                {typeof problemCount === 'number' && problemCount > 0 && (
+                  <span className="explorer-problem-badge">{problemCount}</span>
+                )}
+                {gitStatus && (
+                  <span className={cn(
+                    "explorer-git-badge",
+                    gitStatus === 'U' ? 'is-untracked' : gitStatus === 'M' ? 'is-modified' : gitStatus === 'A' ? 'is-added' : 'is-deleted'
+                  )} title={`Git: ${gitStatus}`}>{gitStatus}</span>
+                )}
+              </>
             )}
-
             {/* Quick actions on hover */}
             <div className="opacity-0 group-hover:opacity-100 transition-opacity flex gap-0.5 ml-auto">
               <button
@@ -283,6 +388,16 @@ const FolderItem = ({
           </div>
         </ContextMenuTrigger>
         <ContextMenuContent className="explorer-context-menu w-48">
+          <ContextMenuItem onClick={() => onCopyItem?.({ type: 'folder', node: folder })} className="text-xs explorer-context-item">
+            <Copy size={14} className="mr-2" /> Copy
+          </ContextMenuItem>
+          <ContextMenuItem onClick={() => onCutItem?.({ type: 'folder', node: folder })} className="text-xs explorer-context-item">
+            <Copy size={14} className="mr-2" /> Cut
+          </ContextMenuItem>
+          <ContextMenuItem onClick={() => onPasteHere?.(cleanPath(folder.path))} className="text-xs explorer-context-item">
+            <Folder size={14} className="mr-2" /> Paste
+          </ContextMenuItem>
+          <ContextMenuSeparator className="explorer-separator" />
           <ContextMenuItem onClick={() => startCreation('file', folder.path)} className="text-xs explorer-context-item">
             <FilePlus size={14} className="mr-2" /> New File
           </ContextMenuItem>
@@ -297,8 +412,14 @@ const FolderItem = ({
             <Trash2 size={14} className="mr-2" /> Delete
           </ContextMenuItem>
           <ContextMenuSeparator className="explorer-separator" />
+          <ContextMenuItem onClick={() => onCopyRelativePath?.(folder)} className="text-xs explorer-context-item">
+            <Copy size={14} className="mr-2" /> Copy Relative Path
+          </ContextMenuItem>
           <ContextMenuItem onClick={() => navigator.clipboard.writeText(folder.realPath || folder.path)} className="text-xs explorer-context-item">
             <Copy size={14} className="mr-2" /> Copy Path
+          </ContextMenuItem>
+          <ContextMenuItem onClick={() => onRevealInOS?.(folder.realPath || folder.path)} className="text-xs explorer-context-item">
+            <Folder size={14} className="mr-2" /> Reveal in Explorer
           </ContextMenuItem>
         </ContextMenuContent>
       </ContextMenu>
@@ -326,6 +447,8 @@ const FileExplorer = ({
   onRenameFolder,
   projectName,
   onOpenFolder,
+  onRefreshExplorer,
+  problems = [],
   rootPath,
   editorInstance,
   onCompareVersion
@@ -338,6 +461,15 @@ const FileExplorer = ({
   const [showSearch, setShowSearch] = useState(false);
   const [outlineOpen, setOutlineOpen] = useState(false);
   const [timelineOpen, setTimelineOpen] = useState(false);
+  const [nestedExpanded, setNestedExpanded] = useState({});
+  const [dragPayload, setDragPayload] = useState(null);
+  const [dragOverPath, setDragOverPath] = useState(null);
+  const [selectedKeys, setSelectedKeys] = useState(new Set());
+  const [selectionAnchor, setSelectionAnchor] = useState(null);
+  const [treeClipboard, setTreeClipboard] = useState(null);
+  const [gitMap, setGitMap] = useState({});
+  const [, setIconRefreshToken] = useState(0);
+  const expandHoverTimerRef = useRef(null);
 
   // Auto expand src folder
   useEffect(() => {
@@ -347,11 +479,108 @@ const FileExplorer = ({
     }
   }, [folders.length]);
 
+  useEffect(() => {
+    const refreshIcons = () => setIconRefreshToken(prev => prev + 1);
+    window.addEventListener('devstudio:icon-pack-changed', refreshIcons);
+    return () => window.removeEventListener('devstudio:icon-pack-changed', refreshIcons);
+  }, []);
+
+  useEffect(() => {
+    const validKeys = new Set([
+      ...folders.map((f) => keyFor('folder', f)),
+      ...files.map((f) => keyFor('file', f)),
+    ]);
+    setSelectedKeys((prev) => new Set([...prev].filter((k) => validKeys.has(k))));
+  }, [files, folders]);
+
+  useEffect(() => () => {
+    if (expandHoverTimerRef.current) clearTimeout(expandHoverTimerRef.current);
+  }, []);
+
+  useEffect(() => {
+    let timer = null;
+    const loadGitStatus = async () => {
+      if (!rootPath || !window.electronAPI?.getGitStatus) {
+        setGitMap({});
+        return;
+      }
+      try {
+        const result = await window.electronAPI.getGitStatus(rootPath);
+        const next = {};
+        (result?.files || []).forEach((entry) => {
+          const rel = cleanPath(entry.path || '');
+          const status = String(entry.status || '').toUpperCase();
+          if (rel) next[rel] = status || (entry.staged ? 'M' : '');
+        });
+        setGitMap(next);
+      } catch {
+        setGitMap({});
+      }
+    };
+    loadGitStatus();
+    timer = setInterval(loadGitStatus, 6000);
+    return () => {
+      if (timer) clearInterval(timer);
+    };
+  }, [rootPath, files.length, folders.length]);
+
+  useEffect(() => {
+    const onKeyDown = (e) => {
+      const isMac = navigator.platform.toUpperCase().includes('MAC');
+      const mod = isMac ? e.metaKey : e.ctrlKey;
+      const tag = document.activeElement?.tagName?.toLowerCase();
+      if (tag === 'input' || tag === 'textarea') return;
+
+      if (mod && e.key.toLowerCase() === 'c') {
+        e.preventDefault();
+        setClipboardFromSelection('copy');
+      } else if (mod && e.key.toLowerCase() === 'x') {
+        e.preventDefault();
+        setClipboardFromSelection('cut');
+      } else if (mod && e.key.toLowerCase() === 'v') {
+        e.preventDefault();
+        pasteFromClipboard(getActivePasteTarget());
+      } else if (e.key === 'Delete') {
+        e.preventDefault();
+        bulkDeleteSelected();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [selectedKeys, treeClipboard, files, folders]);
+
   const toggleFolder = (path) => {
     setExpandedFolders(prev => ({ ...prev, [path]: !prev[path] }));
   };
 
-  const collapseAll = () => setExpandedFolders({});
+  const collapseAll = () => {
+    setExpandedFolders({});
+    setProjectExpanded(false);
+    setOutlineOpen(false);
+    setTimelineOpen(false);
+    setCreationState(null);
+  };
+
+  const expandAll = () => {
+    const allExpanded = {};
+    folders.forEach((folder) => {
+      allExpanded[folder.path] = true;
+    });
+    setExpandedFolders(allExpanded);
+    setProjectExpanded(true);
+    setOutlineOpen(true);
+    setTimelineOpen(true);
+  };
+
+  const toggleCollapseExpandAll = () => {
+    const hasAnyExpanded = Object.values(expandedFolders).some(Boolean);
+    const fullyCollapsed = !projectExpanded && !outlineOpen && !timelineOpen && !hasAnyExpanded;
+    if (fullyCollapsed) {
+      expandAll();
+    } else {
+      collapseAll();
+    }
+  };
 
   const startCreation = (type, parentPath) => {
     const cleanedPath = cleanPath(parentPath);
@@ -374,17 +603,521 @@ const FileExplorer = ({
   };
 
   const sortItems = (items) => items.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+  const keyFor = (type, node) => `${type}:${type === 'file' ? node.id : node.path}`;
+  const nodePath = (type, node) => (type === 'file' ? node.realPath || node.id : node.realPath || '');
+  const selectableNodes = () => {
+    const all = [
+      ...folders.map((f) => ({ type: 'folder', node: f, key: keyFor('folder', f), rank: normalizeAbs(f.realPath || f.path) })),
+      ...files.map((f) => ({ type: 'file', node: f, key: keyFor('file', f), rank: normalizeAbs(f.realPath || f.id || f.path) }))
+    ];
+    return all.sort((a, b) => a.rank.localeCompare(b.rank));
+  };
+
+  const handleNodeClick = (e, payload) => {
+    const key = keyFor(payload.type, payload.node);
+    const withToggle = e.ctrlKey || e.metaKey;
+    const withRange = e.shiftKey;
+    if (withRange) {
+      const list = selectableNodes();
+      const anchor = selectionAnchor || key;
+      const start = list.findIndex((n) => n.key === anchor);
+      const end = list.findIndex((n) => n.key === key);
+      if (start >= 0 && end >= 0) {
+        const [s, t] = start < end ? [start, end] : [end, start];
+        const next = new Set(selectedKeys);
+        list.slice(s, t + 1).forEach((n) => next.add(n.key));
+        setSelectedKeys(next);
+      } else {
+        setSelectedKeys(new Set([key]));
+      }
+      return false;
+    }
+    if (withToggle) {
+      const next = new Set(selectedKeys);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      setSelectedKeys(next);
+      setSelectionAnchor(key);
+      return false;
+    }
+    setSelectedKeys(new Set([key]));
+    setSelectionAnchor(key);
+    return true;
+  };
+
+  const selectedEntries = () => {
+    const map = new Map();
+    files.forEach((f) => map.set(keyFor('file', f), { type: 'file', node: f }));
+    folders.forEach((f) => map.set(keyFor('folder', f), { type: 'folder', node: f }));
+    return Array.from(selectedKeys).map((k) => map.get(k)).filter(Boolean);
+  };
+
+  const normalizeAbs = (value) => String(value || '').replace(/\\/g, '/').toLowerCase();
+  const getDirName = (value = '') => {
+    const normalized = String(value || '').replace(/\\/g, '/');
+    const idx = normalized.lastIndexOf('/');
+    return idx >= 0 ? normalized.slice(0, idx) : '';
+  };
+  const getBaseName = (value = '') => String(value || '').replace(/\\/g, '/').split('/').pop() || '';
+  const relativeToAbsoluteFolder = (folderPath = '') => {
+    const cleaned = cleanPath(folderPath);
+    if (!cleaned) return rootPath || '';
+    const found = folders.find((f) => cleanPath(f.path) === cleaned);
+    return found?.realPath || '';
+  };
+
+  const clearDragHoverTimer = () => {
+    if (expandHoverTimerRef.current) {
+      clearTimeout(expandHoverTimerRef.current);
+      expandHoverTimerRef.current = null;
+    }
+  };
+
+  const startDragPreview = (e, label, type) => {
+    const preview = document.createElement('div');
+    preview.style.cssText = `
+      position: absolute;
+      top: -9999px;
+      left: -9999px;
+      background: rgba(30,30,30,0.95);
+      color: #d4d4d4;
+      border: 1px solid rgba(255,255,255,0.2);
+      border-radius: 8px;
+      padding: 6px 10px;
+      font-size: 12px;
+      font-family: "Segoe UI", sans-serif;
+      pointer-events: none;
+      z-index: 9999;
+      box-shadow: 0 10px 24px rgba(0,0,0,0.35);
+    `;
+    preview.textContent = `${type === 'folder' ? 'Folder' : 'File'}: ${label}`;
+    document.body.appendChild(preview);
+    e.dataTransfer.setDragImage(preview, 8, 8);
+    setTimeout(() => {
+      if (preview.parentNode) preview.parentNode.removeChild(preview);
+    }, 0);
+  };
+
+  const handleDragStartItem = (e, payload) => {
+    const sourcePath = payload.type === 'folder'
+      ? payload.folder.realPath || ''
+      : payload.file.realPath || '';
+    if (!sourcePath) return;
+    const sourceKey = keyFor(payload.type, payload.type === 'folder' ? payload.folder : payload.file);
+    const currentSelection = selectedKeys.has(sourceKey) ? selectedEntries() : [{ type: payload.type, node: payload.type === 'folder' ? payload.folder : payload.file }];
+    const sourceItems = currentSelection
+      .map((entry) => ({
+        type: entry.type,
+        sourcePath: nodePath(entry.type, entry.node),
+        sourceName: entry.node.name,
+      }))
+      .filter((item) => !!item.sourcePath);
+
+    const sourceName = payload.type === 'folder' ? payload.folder.name : payload.file.name;
+    setDragPayload({
+      type: payload.type,
+      sourcePath,
+      sourceName,
+      items: sourceItems,
+    });
+    try {
+      e.dataTransfer.effectAllowed = 'copyMove';
+      e.dataTransfer.setData('text/plain', sourcePath);
+      startDragPreview(e, sourceName, payload.type);
+    } catch {
+      // ignore drag-data issues
+    }
+  };
+
+  const handleDragEndItem = () => {
+    clearDragHoverTimer();
+    setDragOverPath(null);
+    setDragPayload(null);
+  };
+
+  const canDropToFolder = (targetFolderPath = '') => {
+    if (!dragPayload?.items?.length) return { valid: false, reason: 'No source path' };
+    const targetAbsFolder = relativeToAbsoluteFolder(targetFolderPath);
+    if (!targetAbsFolder) return { valid: false, reason: 'Invalid target folder' };
+    const targetAbsNormalized = normalizeAbs(targetAbsFolder);
+    const sourceFolders = dragPayload.items
+      .filter((i) => i.type === 'folder')
+      .map((i) => normalizeAbs(i.sourcePath));
+    const planned = [];
+    let anyMove = false;
+    for (const item of dragPayload.items) {
+      const sourceAbsPath = item.sourcePath;
+      const sourceParent = normalizeAbs(getDirName(sourceAbsPath));
+      const sourceAbsNormalized = normalizeAbs(sourceAbsPath);
+      if (sourceFolders.some((folderPath) => folderPath !== sourceAbsNormalized && sourceAbsNormalized.startsWith(`${folderPath}/`))) {
+        continue;
+      }
+      if (item.type === 'folder' && (targetAbsNormalized === sourceAbsNormalized || targetAbsNormalized.startsWith(`${sourceAbsNormalized}/`))) {
+        return { valid: false, reason: 'Cannot move folder into itself' };
+      }
+      if (sourceParent === targetAbsNormalized) continue;
+      const nextPath = `${targetAbsFolder}\\${item.sourceName}`;
+      if (normalizeAbs(nextPath) === sourceAbsNormalized) continue;
+      planned.push({ ...item, newAbsPath: nextPath });
+      anyMove = true;
+    }
+    if (!anyMove) return { valid: false, reason: 'No change' };
+    return { valid: true, moves: planned };
+  };
+
+  const handleDropMove = async (targetFolderPath, altKey = false) => {
+    if (!dragPayload?.items?.length || !window.electronAPI?.renamePath) return;
+    const check = canDropToFolder(targetFolderPath);
+    if (!check.valid) {
+      if (check.reason && check.reason !== 'Already in this folder' && check.reason !== 'No change') toast.warning(check.reason);
+      return;
+    }
+
+    if (altKey) {
+      toast.info('Alt+Drag copy is not available yet in this build.');
+    }
+
+    try {
+      const moveResults = [];
+      for (const move of check.moves) {
+        const result = await window.electronAPI.renamePath(move.sourcePath, move.newAbsPath);
+        if (!result?.success) throw new Error(result?.error || `Move failed: ${move.sourceName}`);
+        moveResults.push({ from: move.sourcePath, to: move.newAbsPath });
+      }
+      if (typeof onRefreshExplorer === 'function') await onRefreshExplorer();
+      toast.success(`Moved ${moveResults.length} item(s)`, {
+        action: {
+          label: 'Undo',
+          onClick: async () => {
+            try {
+              for (const move of moveResults.slice().reverse()) {
+                const undoRes = await window.electronAPI.renamePath(move.to, move.from);
+                if (!undoRes?.success) throw new Error(undoRes?.error || 'Undo failed');
+              }
+              if (typeof onRefreshExplorer === 'function') await onRefreshExplorer();
+              toast.success('Move undone');
+            } catch (err) {
+              toast.error(err?.message || 'Undo failed');
+            }
+          }
+        }
+      });
+    } catch (err) {
+      toast.error(err?.message || 'Move failed');
+    }
+  };
+
+  const handleDragOverFolder = (e, folder) => {
+    const folderPath = cleanPath(folder?.path);
+    const check = canDropToFolder(folderPath);
+    if (check.valid) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = e.altKey ? 'copy' : 'move';
+      setDragOverPath(folderPath);
+      if (!expandedFolders[folder.path]) {
+        clearDragHoverTimer();
+        expandHoverTimerRef.current = setTimeout(() => {
+          setExpandedFolders((prev) => ({ ...prev, [folder.path]: true }));
+        }, 500);
+      }
+    } else {
+      e.dataTransfer.dropEffect = 'none';
+    }
+  };
+
+  const handleDropFolder = async (e, folder) => {
+    e.preventDefault();
+    clearDragHoverTimer();
+    const folderPath = cleanPath(folder?.path);
+    setDragOverPath(null);
+    await handleDropMove(folderPath, e.altKey);
+    setDragPayload(null);
+  };
+
+  const handleDragLeaveFolder = () => {
+    clearDragHoverTimer();
+  };
+
+  const handleRootDragOver = (e) => {
+    const check = canDropToFolder('');
+    if (check.valid) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = e.altKey ? 'copy' : 'move';
+      setDragOverPath('__root__');
+    } else {
+      e.dataTransfer.dropEffect = 'none';
+    }
+  };
+
+  const handleRootDrop = async (e) => {
+    e.preventDefault();
+    clearDragHoverTimer();
+    setDragOverPath(null);
+    await handleDropMove('', e.altKey);
+    setDragPayload(null);
+  };
 
   const filterItems = (items) => {
+    const fuzzyMatch = (text, query) => {
+      const t = String(text || '').toLowerCase();
+      const q = String(query || '').toLowerCase().trim();
+      if (!q) return true;
+      if (t.includes(q)) return true;
+      let i = 0;
+      for (let j = 0; j < t.length && i < q.length; j += 1) {
+        if (t[j] === q[i]) i += 1;
+      }
+      return i === q.length;
+    };
     let filtered = items.filter(item => {
       const name = item.name.toLowerCase();
       if (name === '.devstudio' || name === 'node_modules') return false;
       return true;
     });
     if (searchQuery.trim()) {
-      filtered = filtered.filter(item => item.name.toLowerCase().includes(searchQuery.toLowerCase()));
+      filtered = filtered.filter(item => fuzzyMatch(item.name, searchQuery));
     }
     return filtered;
+  };
+
+  const buildFileNesting = (items) => {
+    const byName = new Map(items.map((f) => [f.name, f]));
+    const consumed = new Set();
+    const rows = [];
+    items.forEach((file) => {
+      if (consumed.has(file.id)) return;
+      const parts = String(file.name || '').split('.');
+      const children = [];
+      if (parts.length === 2) {
+        const stem = parts[0];
+        items.forEach((candidate) => {
+          if (candidate.id === file.id) return;
+          if (candidate.name.startsWith(`${stem}.`) && candidate.name !== file.name) {
+            const cparts = candidate.name.split('.');
+            if (cparts.length > 2) children.push(candidate);
+          }
+        });
+      } else if (parts.length > 2) {
+        const parentName = `${parts[0]}.${parts[parts.length - 1]}`;
+        if (byName.has(parentName)) return;
+      }
+      if (children.length > 0) {
+        consumed.add(file.id);
+        children.forEach((c) => consumed.add(c.id));
+        rows.push({ parent: file, children: children.sort((a, b) => a.name.localeCompare(b.name)) });
+      } else {
+        consumed.add(file.id);
+        rows.push({ parent: file, children: [] });
+      }
+    });
+    return rows;
+  };
+
+  const toRelativePath = (targetPath = '') => {
+    const rootNorm = String(rootPath || '').replace(/\\/g, '/').toLowerCase();
+    const targetNorm = String(targetPath || '').replace(/\\/g, '/');
+    if (!rootNorm) return targetNorm;
+    const lowerTarget = targetNorm.toLowerCase();
+    if (lowerTarget.startsWith(rootNorm)) {
+      return targetNorm.slice(rootNorm.length).replace(/^\/+/, '');
+    }
+    return targetNorm;
+  };
+
+  const problemCountByFile = React.useMemo(() => {
+    const counts = {};
+    (problems || []).forEach((p) => {
+      const rel = cleanPath(toRelativePath(p.filePath || p.file || ''));
+      if (!rel) return;
+      counts[rel] = (counts[rel] || 0) + 1;
+    });
+    return counts;
+  }, [problems, rootPath]);
+
+  const folderProblemCount = (folderPath) => {
+    const key = cleanPath(folderPath);
+    if (!key) return 0;
+    return Object.entries(problemCountByFile).reduce((acc, [filePath, count]) => (
+      filePath.startsWith(`${key}/`) ? acc + count : acc
+    ), 0);
+  };
+
+  const gitStatusForFolder = (folderPath) => {
+    const key = cleanPath(folderPath);
+    if (!key) return null;
+    const statuses = Object.entries(gitMap)
+      .filter(([p]) => p.startsWith(`${key}/`))
+      .map(([, s]) => s);
+    if (statuses.includes('M')) return 'M';
+    if (statuses.includes('A')) return 'A';
+    if (statuses.includes('U') || statuses.includes('??')) return 'U';
+    return null;
+  };
+
+  const handleCopyRelativePath = async (item) => {
+    const absolute = item?.realPath || item?.id || item?.path || '';
+    const relative = toRelativePath(absolute || item?.path || '');
+    if (!relative) return;
+    await navigator.clipboard.writeText(relative);
+    toast.success('Relative path copied');
+  };
+
+  const handleRevealInOS = async (absolutePath) => {
+    if (!absolutePath || !window.electronAPI?.executeCommand) return;
+    const escaped = String(absolutePath).replace(/"/g, '""');
+    try {
+      await window.electronAPI.executeCommand(`explorer /select,"${escaped}"`);
+    } catch {
+      toast.error('Reveal in Explorer failed');
+    }
+  };
+
+  const handleDuplicateFile = async (file) => {
+    if (!file?.realPath || !window.electronAPI?.readFile || !window.electronAPI?.createFile) return;
+    const originalPath = String(file.realPath);
+    const dir = getDirName(originalPath);
+    const name = getBaseName(originalPath);
+    const dotIndex = name.lastIndexOf('.');
+    const base = dotIndex > 0 ? name.slice(0, dotIndex) : name;
+    const ext = dotIndex > 0 ? name.slice(dotIndex) : '';
+
+    let duplicatePath = `${dir}/${base} copy${ext}`.replace(/\//g, '\\');
+    let copyIndex = 2;
+    const existingSet = new Set(files.map((f) => normalizeAbs(f.realPath || '')));
+    while (existingSet.has(normalizeAbs(duplicatePath))) {
+      duplicatePath = `${dir}/${base} copy ${copyIndex}${ext}`.replace(/\//g, '\\');
+      copyIndex += 1;
+    }
+
+    try {
+      const content = await window.electronAPI.readFile(originalPath);
+      const result = await window.electronAPI.createFile(duplicatePath, content || '');
+      if (!result?.success) throw new Error(result?.error || 'Duplicate failed');
+      if (typeof onRefreshExplorer === 'function') await onRefreshExplorer();
+      toast.success(`Duplicated: ${name}`);
+    } catch (err) {
+      toast.error(err?.message || 'Duplicate failed');
+    }
+  };
+
+  const ensureUniqueTargetPath = (baseTargetPath) => {
+    const existing = new Set([
+      ...files.map((f) => normalizeAbs(f.realPath || '')),
+      ...folders.map((f) => normalizeAbs(f.realPath || ''))
+    ]);
+    if (!existing.has(normalizeAbs(baseTargetPath))) return baseTargetPath;
+    const dir = getDirName(baseTargetPath);
+    const name = getBaseName(baseTargetPath);
+    const dot = name.lastIndexOf('.');
+    const stem = dot > 0 ? name.slice(0, dot) : name;
+    const ext = dot > 0 ? name.slice(dot) : '';
+    let i = 2;
+    let candidate = `${dir}\\${stem} copy${ext}`;
+    while (existing.has(normalizeAbs(candidate))) {
+      candidate = `${dir}\\${stem} copy ${i}${ext}`;
+      i += 1;
+    }
+    return candidate;
+  };
+
+  const copyFolderRecursive = async (sourceFolderPath, targetFolderPath) => {
+    const snapshot = await window.electronAPI.openPath(sourceFolderPath);
+    if (!snapshot) throw new Error('Cannot read source folder');
+    await window.electronAPI.createFolder(targetFolderPath);
+
+    const sourceNorm = normalizeAbs(sourceFolderPath);
+    const folderTasks = (snapshot.folders || []).map((f) => {
+      const rel = String(f.realPath || '').replace(/\\/g, '/').slice(String(sourceFolderPath).replace(/\\/g, '/').length).replace(/^\/+/, '');
+      if (!rel) return null;
+      return window.electronAPI.createFolder(`${targetFolderPath}\\${rel.replace(/\//g, '\\')}`);
+    }).filter(Boolean);
+    await Promise.all(folderTasks);
+
+    for (const file of snapshot.files || []) {
+      const fileAbs = String(file.realPath || '');
+      const rel = fileAbs.replace(/\\/g, '/').slice(String(sourceFolderPath).replace(/\\/g, '/').length).replace(/^\/+/, '');
+      if (!rel) continue;
+      const content = await window.electronAPI.readFile(fileAbs);
+      const targetFilePath = `${targetFolderPath}\\${rel.replace(/\//g, '\\')}`;
+      const createRes = await window.electronAPI.createFile(targetFilePath, content || '');
+      if (!createRes?.success && !String(createRes?.error || '').toLowerCase().includes('exists')) {
+        throw new Error(createRes?.error || `Failed copying ${rel}`);
+      }
+    }
+    return sourceNorm;
+  };
+
+  const getActivePasteTarget = () => {
+    const selectedFolders = selectedEntries().filter((e) => e.type === 'folder');
+    if (selectedFolders.length === 1) return cleanPath(selectedFolders[0].node.path);
+    return '';
+  };
+
+  const setClipboardFromSelection = (mode, fallbackEntry = null) => {
+    const items = (selectedEntries().length ? selectedEntries() : (fallbackEntry ? [fallbackEntry] : []))
+      .map((entry) => ({
+        type: entry.type,
+        path: nodePath(entry.type, entry.node),
+        name: entry.node.name,
+      }))
+      .filter((item) => !!item.path);
+    if (!items.length) return;
+    setTreeClipboard({ mode, items });
+    toast.success(`${mode === 'cut' ? 'Cut' : 'Copied'} ${items.length} item(s)`);
+  };
+
+  const pasteFromClipboard = async (targetFolderPath = '') => {
+    if (!treeClipboard?.items?.length || !window.electronAPI) return;
+    const targetAbsFolder = relativeToAbsoluteFolder(targetFolderPath);
+    if (!targetAbsFolder) return;
+
+    try {
+      if (treeClipboard.mode === 'cut') {
+        for (const item of treeClipboard.items) {
+          const dest = ensureUniqueTargetPath(`${targetAbsFolder}\\${item.name}`);
+          const res = await window.electronAPI.renamePath(item.path, dest);
+          if (!res?.success) throw new Error(res?.error || `Failed moving ${item.name}`);
+        }
+      } else {
+        for (const item of treeClipboard.items) {
+          const dest = ensureUniqueTargetPath(`${targetAbsFolder}\\${item.name}`);
+          if (item.type === 'file') {
+            const content = await window.electronAPI.readFile(item.path);
+            const createRes = await window.electronAPI.createFile(dest, content || '');
+            if (!createRes?.success && !String(createRes?.error || '').toLowerCase().includes('exists')) {
+              throw new Error(createRes?.error || `Failed copying ${item.name}`);
+            }
+          } else {
+            await copyFolderRecursive(item.path, dest);
+          }
+        }
+      }
+      if (typeof onRefreshExplorer === 'function') await onRefreshExplorer();
+      if (treeClipboard.mode === 'cut') setTreeClipboard(null);
+      toast.success('Paste complete');
+    } catch (err) {
+      toast.error(err?.message || 'Paste failed');
+    }
+  };
+
+  const bulkDeleteSelected = async () => {
+    const entries = selectedEntries();
+    if (!entries.length || !window.electronAPI?.deletePath) return;
+    const ok = window.confirm(`Delete ${entries.length} selected item(s)?`);
+    if (!ok) return;
+    try {
+      for (const entry of entries) {
+        const p = nodePath(entry.type, entry.node);
+        if (!p) continue;
+        const res = await window.electronAPI.deletePath(p);
+        if (!res?.success) throw new Error(res?.error || `Failed deleting ${entry.node.name}`);
+      }
+      if (typeof onRefreshExplorer === 'function') await onRefreshExplorer();
+      setSelectedKeys(new Set());
+      toast.success(`Deleted ${entries.length} item(s)`);
+    } catch (err) {
+      toast.error(err?.message || 'Bulk delete failed');
+    }
   };
 
   const renderTree = (parentPath) => {
@@ -400,6 +1133,8 @@ const FileExplorer = ({
 
     childFolders = filterItems(sortItems(childFolders));
     childFiles = filterItems(sortItems(childFiles));
+
+    const nestedRows = buildFileNesting(childFiles);
 
     return (
       <>
@@ -418,26 +1153,105 @@ const FileExplorer = ({
             onDeleteFolder={onDeleteFolder}
             renderTree={renderTree}
             startCreation={startCreation}
+            onCopyRelativePath={handleCopyRelativePath}
+            onRevealInOS={handleRevealInOS}
+            onCopyItem={(entry) => setClipboardFromSelection('copy', entry)}
+            onCutItem={(entry) => setClipboardFromSelection('cut', entry)}
+            onPasteHere={pasteFromClipboard}
+            onNodeClick={handleNodeClick}
+            isSelected={selectedKeys.has(keyFor('folder', folder))}
+            gitStatus={gitStatusForFolder(folder.path)}
+            problemCount={folderProblemCount(folder.path)}
+            onDragStartItem={handleDragStartItem}
+            onDragEndItem={handleDragEndItem}
+            onDragOverTarget={handleDragOverFolder}
+            onDropTarget={handleDropFolder}
+            onDragLeaveTarget={handleDragLeaveFolder}
+            isDragOver={dragOverPath === cleanPath(folder.path)}
+            isDragging={dragPayload?.type === 'folder' && dragPayload?.sourcePath === (folder.realPath || '')}
           />
         ))}
-        {childFiles.map(file => (
-          <FileItem
-            key={file.id}
-            file={file}
-            activeFile={activeFile}
-            onFileClick={onFileClick}
-            renamingId={renamingId}
-            setRenamingId={setRenamingId}
-            onRenameFile={onRenameFile}
-            onDeleteFile={onDeleteFile}
-          />
-        ))}
+        {nestedRows.map(({ parent, children }) => {
+          const nestKey = parent.id;
+          const expanded = nestedExpanded[nestKey] !== false;
+          return (
+            <div key={parent.id}>
+              <div className="flex items-center">
+                {children.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setNestedExpanded((prev) => ({ ...prev, [nestKey]: !expanded }));
+                    }}
+                    className="ml-1 w-4 h-4 flex items-center justify-center explorer-chevron hover:text-white"
+                    title={expanded ? 'Collapse nested files' : 'Expand nested files'}
+                  >
+                    {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                  </button>
+                )}
+                <div className="flex-1">
+                  <FileItem
+                    file={parent}
+                    activeFile={activeFile}
+                    onFileClick={onFileClick}
+                    renamingId={renamingId}
+                    setRenamingId={setRenamingId}
+                    onRenameFile={onRenameFile}
+                    onDeleteFile={onDeleteFile}
+                    onDuplicateFile={handleDuplicateFile}
+                    onCopyRelativePath={handleCopyRelativePath}
+                    onRevealInOS={handleRevealInOS}
+                    onCopyItem={(entry) => setClipboardFromSelection('copy', entry)}
+                    onCutItem={(entry) => setClipboardFromSelection('cut', entry)}
+                    onPasteHere={pasteFromClipboard}
+                    onNodeClick={handleNodeClick}
+                    isSelected={selectedKeys.has(keyFor('file', parent))}
+                    gitStatus={gitMap[cleanPath(parent.path)] || null}
+                    problemCount={problemCountByFile[cleanPath(parent.path)] || 0}
+                    onDragStartItem={handleDragStartItem}
+                    onDragEndItem={handleDragEndItem}
+                    isDragging={dragPayload?.type === 'file' && dragPayload?.sourcePath === (parent.realPath || '')}
+                    className={children.length > 0 ? "ml-1" : ""}
+                  />
+                </div>
+              </div>
+              {expanded && children.map((file) => (
+                <FileItem
+                  key={file.id}
+                  file={file}
+                  activeFile={activeFile}
+                  onFileClick={onFileClick}
+                  renamingId={renamingId}
+                  setRenamingId={setRenamingId}
+                  onRenameFile={onRenameFile}
+                  onDeleteFile={onDeleteFile}
+                  onDuplicateFile={handleDuplicateFile}
+                  onCopyRelativePath={handleCopyRelativePath}
+                  onRevealInOS={handleRevealInOS}
+                  onCopyItem={(entry) => setClipboardFromSelection('copy', entry)}
+                  onCutItem={(entry) => setClipboardFromSelection('cut', entry)}
+                  onPasteHere={pasteFromClipboard}
+                  onNodeClick={handleNodeClick}
+                  isSelected={selectedKeys.has(keyFor('file', file))}
+                  gitStatus={gitMap[cleanPath(file.path)] || null}
+                  problemCount={problemCountByFile[cleanPath(file.path)] || 0}
+                  onDragStartItem={handleDragStartItem}
+                  onDragEndItem={handleDragEndItem}
+                  isDragging={dragPayload?.type === 'file' && dragPayload?.sourcePath === (file.realPath || '')}
+                  className="ml-9"
+                />
+              ))}
+            </div>
+          );
+        })}
       </>
     );
   };
 
   const rootFoldersList = filterItems(sortItems(folders.filter(f => !cleanPath(f.path).includes('/'))));
   const rootFilesList = filterItems(sortItems(files.filter(f => !cleanPath(f.folder))));
+  const rootNestedRows = buildFileNesting(rootFilesList);
 
   // Empty state
   if (!rootPath && files.length === 0 && folders.length === 0) {
@@ -453,25 +1267,36 @@ const FileExplorer = ({
   }
 
   return (
-    <div className="h-full explorer-bg flex flex-col border-r explorer-border">
+    <div
+      className="h-full explorer-bg flex flex-col border-r explorer-border"
+      style={{ fontFamily: '"Segoe UI", Inter, sans-serif' }}
+    >
       {/* Header */}
-      <div className="flex items-center justify-between px-3 py-2.5 text-[11px] uppercase tracking-wider font-semibold explorer-header min-w-0 overflow-hidden">
+      <div className="flex items-center justify-between px-3 py-2.5 text-[11px] uppercase tracking-[0.08em] font-semibold explorer-header min-w-0 overflow-hidden">
         <span className="flex-shrink-0 truncate explorer-text-muted">Explorer</span>
-        <div className="flex gap-0.5 flex-shrink-0 ml-1">
-          <button onClick={() => setShowSearch(!showSearch)} className={cn("explorer-header-btn w-6 h-6 p-0 rounded", showSearch && "explorer-header-btn-active")} title="Search">
-            <Search size={12} />
+        <div className="flex items-center gap-1 flex-shrink-0 ml-1">
+          <button onClick={() => setShowSearch(!showSearch)} className={cn("explorer-header-btn w-[22px] h-[22px] p-0 rounded-md", showSearch && "explorer-header-btn-active")} title="Search">
+            <Search size={13} />
           </button>
-          <button onClick={() => startCreation('file', '')} className="explorer-header-btn w-6 h-6 p-0 rounded" title="New File">
-            <FilePlus size={12} />
+          <button onClick={() => startCreation('file', '')} className="explorer-header-btn w-[22px] h-[22px] p-0 rounded-md" title="New File">
+            <FilePlus size={13} />
           </button>
-          <button onClick={() => startCreation('folder', '')} className="explorer-header-btn w-6 h-6 p-0 rounded" title="New Folder">
-            <FolderPlus size={12} />
+          <button onClick={() => startCreation('folder', '')} className="explorer-header-btn w-[22px] h-[22px] p-0 rounded-md" title="New Folder">
+            <FolderPlus size={13} />
           </button>
-          <button onClick={collapseAll} className="explorer-header-btn w-6 h-6 p-0 rounded" title="Collapse All">
-            <ChevronRight size={12} />
+          <button
+            onClick={toggleCollapseExpandAll}
+            className="explorer-header-btn w-[22px] h-[22px] p-0 rounded-md"
+            title="Collapse / Expand All"
+          >
+            <ChevronRight size={13} />
           </button>
-          <button onClick={onOpenFolder} className="explorer-header-btn w-6 h-6 p-0 rounded" title="Refresh">
-            <RefreshCw size={12} />
+          <button
+            onClick={() => (typeof onRefreshExplorer === 'function' ? onRefreshExplorer() : onOpenFolder())}
+            className="explorer-header-btn w-[22px] h-[22px] p-0 rounded-md"
+            title="Refresh Explorer"
+          >
+            <RefreshCw size={13} />
           </button>
         </div>
       </div>
@@ -495,7 +1320,13 @@ const FileExplorer = ({
         <ContextMenu>
           <ContextMenuTrigger>
             <div
-              className="explorer-project flex items-center gap-1 px-2 py-2 cursor-pointer text-[11px] font-bold uppercase tracking-wide transition-all duration-100 group rounded-lg my-0.5"
+              className={cn(
+                "explorer-project flex items-center gap-1 px-2 py-2 cursor-pointer text-[12px] font-semibold tracking-[0.02em] transition-all duration-100 group rounded-lg my-0.5",
+                dragOverPath === '__root__' && "explorer-drop-target"
+              )}
+              onDragOver={handleRootDragOver}
+              onDrop={handleRootDrop}
+              onDragLeave={() => setDragOverPath((prev) => (prev === '__root__' ? null : prev))}
               onClick={() => setProjectExpanded(!projectExpanded)}
             >
               <span className="explorer-chevron transition-transform duration-150">
@@ -523,6 +1354,19 @@ const FileExplorer = ({
             </div>
           </ContextMenuTrigger>
           <ContextMenuContent className="explorer-context-menu w-48">
+            <ContextMenuItem onClick={() => setClipboardFromSelection('copy')} className="text-xs explorer-context-item">
+              <Copy size={14} className="mr-2" /> Copy Selected
+            </ContextMenuItem>
+            <ContextMenuItem onClick={() => setClipboardFromSelection('cut')} className="text-xs explorer-context-item">
+              <Copy size={14} className="mr-2" /> Cut Selected
+            </ContextMenuItem>
+            <ContextMenuItem onClick={() => pasteFromClipboard('')} className="text-xs explorer-context-item">
+              <Folder size={14} className="mr-2" /> Paste
+            </ContextMenuItem>
+            <ContextMenuItem onClick={bulkDeleteSelected} className="text-red-400 text-xs">
+              <Trash2 size={14} className="mr-2" /> Delete Selected
+            </ContextMenuItem>
+            <ContextMenuSeparator className="explorer-separator" />
             <ContextMenuItem onClick={() => { startCreation('file', ''); setProjectExpanded(true); }} className="text-xs explorer-context-item">
               <FilePlus size={14} className="mr-2" /> New File
             </ContextMenuItem>
@@ -554,20 +1398,98 @@ const FileExplorer = ({
                 onDeleteFolder={onDeleteFolder}
                 renderTree={renderTree}
                 startCreation={startCreation}
+                onCopyRelativePath={handleCopyRelativePath}
+                onRevealInOS={handleRevealInOS}
+                onCopyItem={(entry) => setClipboardFromSelection('copy', entry)}
+                onCutItem={(entry) => setClipboardFromSelection('cut', entry)}
+                onPasteHere={pasteFromClipboard}
+                onNodeClick={handleNodeClick}
+                isSelected={selectedKeys.has(keyFor('folder', folder))}
+                gitStatus={gitStatusForFolder(folder.path)}
+                problemCount={folderProblemCount(folder.path)}
+                onDragStartItem={handleDragStartItem}
+                onDragEndItem={handleDragEndItem}
+                onDragOverTarget={handleDragOverFolder}
+                onDropTarget={handleDropFolder}
+                onDragLeaveTarget={handleDragLeaveFolder}
+                isDragOver={dragOverPath === cleanPath(folder.path)}
+                isDragging={dragPayload?.type === 'folder' && dragPayload?.sourcePath === (folder.realPath || '')}
               />
             ))}
-            {rootFilesList.map(file => (
-              <FileItem
-                key={file.id}
-                file={file}
-                activeFile={activeFile}
-                onFileClick={onFileClick}
-                renamingId={renamingId}
-                setRenamingId={setRenamingId}
-                onRenameFile={onRenameFile}
-                onDeleteFile={onDeleteFile}
-              />
-            ))}
+            {rootNestedRows.map(({ parent, children }) => {
+              const nestKey = parent.id;
+              const expanded = nestedExpanded[nestKey] !== false;
+              return (
+                <div key={parent.id}>
+                  <div className="flex items-center">
+                    {children.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setNestedExpanded((prev) => ({ ...prev, [nestKey]: !expanded }));
+                        }}
+                        className="ml-1 w-4 h-4 flex items-center justify-center explorer-chevron hover:text-white"
+                        title={expanded ? 'Collapse nested files' : 'Expand nested files'}
+                      >
+                        {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                      </button>
+                    )}
+                    <div className="flex-1">
+                      <FileItem
+                        file={parent}
+                        activeFile={activeFile}
+                        onFileClick={onFileClick}
+                        renamingId={renamingId}
+                        setRenamingId={setRenamingId}
+                        onRenameFile={onRenameFile}
+                        onDeleteFile={onDeleteFile}
+                        onDuplicateFile={handleDuplicateFile}
+                        onCopyRelativePath={handleCopyRelativePath}
+                        onRevealInOS={handleRevealInOS}
+                        onCopyItem={(entry) => setClipboardFromSelection('copy', entry)}
+                        onCutItem={(entry) => setClipboardFromSelection('cut', entry)}
+                        onPasteHere={pasteFromClipboard}
+                        onNodeClick={handleNodeClick}
+                        isSelected={selectedKeys.has(keyFor('file', parent))}
+                        gitStatus={gitMap[cleanPath(parent.path)] || null}
+                        problemCount={problemCountByFile[cleanPath(parent.path)] || 0}
+                        onDragStartItem={handleDragStartItem}
+                        onDragEndItem={handleDragEndItem}
+                        isDragging={dragPayload?.type === 'file' && dragPayload?.sourcePath === (parent.realPath || '')}
+                        className={children.length > 0 ? "ml-1" : ""}
+                      />
+                    </div>
+                  </div>
+                  {expanded && children.map((file) => (
+                    <FileItem
+                      key={file.id}
+                      file={file}
+                      activeFile={activeFile}
+                      onFileClick={onFileClick}
+                      renamingId={renamingId}
+                      setRenamingId={setRenamingId}
+                      onRenameFile={onRenameFile}
+                      onDeleteFile={onDeleteFile}
+                      onDuplicateFile={handleDuplicateFile}
+                      onCopyRelativePath={handleCopyRelativePath}
+                      onRevealInOS={handleRevealInOS}
+                      onCopyItem={(entry) => setClipboardFromSelection('copy', entry)}
+                      onCutItem={(entry) => setClipboardFromSelection('cut', entry)}
+                      onPasteHere={pasteFromClipboard}
+                      onNodeClick={handleNodeClick}
+                      isSelected={selectedKeys.has(keyFor('file', file))}
+                      gitStatus={gitMap[cleanPath(file.path)] || null}
+                      problemCount={problemCountByFile[cleanPath(file.path)] || 0}
+                      onDragStartItem={handleDragStartItem}
+                      onDragEndItem={handleDragEndItem}
+                      isDragging={dragPayload?.type === 'file' && dragPayload?.sourcePath === (file.realPath || '')}
+                      className="ml-9"
+                    />
+                  ))}
+                </div>
+              );
+            })}
             {searchQuery && rootFoldersList.length === 0 && rootFilesList.length === 0 && (
               <div className="px-3 py-4 text-center explorer-text-muted text-xs">
                 No files found matching "{searchQuery}"

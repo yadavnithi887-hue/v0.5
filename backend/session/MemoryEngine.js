@@ -103,8 +103,9 @@ class MemoryEngine {
             headers: {
                 'Authorization': `Bearer ${accessToken}`,
                 'Content-Type': 'application/json',
-                'User-Agent': 'antigravity/1.15.8 darwin/arm64',
-                'X-Goog-Api-Client': 'google-cloud-sdk vscode_cloudshelleditor/0.1'
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Antigravity/1.19.6 Chrome/138.0.7204.235 Electron/37.3.1 Safari/537.36',
+                'X-Goog-Api-Client': 'google-cloud-sdk vscode_cloudshelleditor/0.1',
+                'Client-Metadata': '{"ideType":"ANTIGRAVITY","platform":"WINDOWS","pluginType":"GEMINI"}'
             },
             body: JSON.stringify(body)
         });

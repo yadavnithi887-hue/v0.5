@@ -138,7 +138,7 @@ npm run start:full
 ### 🔐 Connect AI (30 seconds)
 1. Open Settings (`Ctrl/Cmd + ,`)
 2. Click **"Connect Google Account"**
-3. OAuth flow on `localhost:51121`
+3. OAuth flow on `localhost:<callback-port>` (default `51121`, auto-fallback if blocked)
 4. ✅ Auto-discovered `projectId`
 
 ### 📱 Telegram Setup (2 Minutes)

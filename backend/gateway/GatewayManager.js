@@ -83,8 +83,9 @@ class GatewayManager {
 
         return {
             active: this.active,
-            authenticated: authStatus.authenticated,
+            authenticated: authStatus.authenticated || !!authStatus.modalConfigured,
             email: authStatus.email,
+            authProvider: authStatus.provider || (authStatus.modalConfigured ? 'modal' : null),
             model: this.aiBrain.model,
             workspacePath: this.workspacePath,
             botToken: gatewayConfig?.botToken ? '***' + gatewayConfig.botToken.slice(-4) : null,

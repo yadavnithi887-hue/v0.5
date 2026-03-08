@@ -564,6 +564,25 @@ The combination of structured modes (PLANNING, EXECUTION, VERIFICATION), artifac
 - \`update_agent_memory\`: Write or append to \`~/.vsdev/workspace/MEMORY.md\` to persist important architecture decisions, constraints, and ongoing tasks.
 - Use these dedicated memory tools for profile/memory persistence. Do NOT use generic file tools (\`view_file\`, \`write_to_file\`, \`replace_file_content\`) for USER.md/MEMORY.md unless the user explicitly requests direct file editing.`;
 
+        prompt += `\n\n## 🔍 AUTO-VERIFY LOOP (MANDATORY — NON-NEGOTIABLE)
+
+**After ANY code modification** (write_to_file, replace_file_content, multi_replace_file_content), you MUST:
+
+1. Call \`check_problems\` to read IDE diagnostics (errors/warnings from Monaco Editor)
+2. If errors are found → **fix them immediately** (do NOT respond to user yet)
+3. Call \`check_problems\` again to verify the fix
+4. **Repeat steps 2-3** until the result shows "0 errors, 0 warnings"
+5. ONLY THEN deliver your response to the user
+
+**This is the HIGHEST PRIORITY rule.** Never deliver code that has unresolved errors in the IDE's Problems panel. The user's trust depends on error-free code delivery.
+
+**Example flow:**
+\`\`\`
+write_to_file → check_problems → "2 errors found" → fix errors → check_problems → "0 errors" → respond ✅
+\`\`\`
+
+**EXCEPTION:** If check_problems times out (IDE not responding), you may proceed but WARN the user that verification was not possible.`;
+
         prompt += `\n\n## Artifact Tools (STRICT ISOLATION)
 - Use ONLY \`brain_list_artifacts\`, \`brain_read_artifact\`, and \`brain_write_artifact\` for task artifacts.
 - Artifact files are session-scoped and hidden in local brain storage under \`~/.vsdev/brain/<session-id>/\`.
@@ -611,23 +630,55 @@ ${sessionContext.techStack.join(', ')}`;
      * Build the contents array for Gemini API
      * Combines recent message history with the new user message
      */
-    buildContents(userMessage, sessionContext = {}) {
+    buildContents(userMessage, sessionContext = {}, attachments = []) {
         const contents = [];
 
         // Add recent message history from session
         if (sessionContext.recentMessages && sessionContext.recentMessages.length > 0) {
             for (const msg of sessionContext.recentMessages) {
+                const msgParts = [{ text: msg.content }];
+                // Note: we don't re-send old attachments in memory to save tokens/bandwidth,
+                // but if we wanted to, we would process msg.attachments here too.
                 contents.push({
                     role: msg.role === 'assistant' ? 'model' : 'user',
-                    parts: [{ text: msg.content }]
+                    parts: msgParts
                 });
             }
         }
 
-        // Add the current user message
+        // Add the current user message with explicit parts
+        const userParts = [];
+        if (userMessage) {
+            userParts.push({ text: userMessage });
+        }
+
+        if (attachments && attachments.length > 0) {
+            for (let i = 0; i < attachments.length; i++) {
+                const att = attachments[i];
+                if (att.dataUrl && att.dataUrl.startsWith('data:image/')) {
+                    const match = att.dataUrl.match(/^data:(image\/[a-zA-Z0-9+-.]+);base64,(.+)$/);
+                    if (match && match.length === 3) {
+                        // Insert a sequence label right before the exact image data block
+                        userParts.push({ text: `\n[Attached Image ${i + 1}: ${att.name}]\n` });
+                        userParts.push({
+                            inlineData: {
+                                mimeType: match[1],
+                                data: match[2]
+                            }
+                        });
+                    }
+                }
+            }
+        }
+
+        // Fallback for empty messages with only attachments
+        if (userParts.length === 0) {
+            userParts.push({ text: 'Please look at the attached files.' });
+        }
+
         contents.push({
             role: 'user',
-            parts: [{ text: userMessage }]
+            parts: userParts
         });
 
         return contents;

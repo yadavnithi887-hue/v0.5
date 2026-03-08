@@ -1,262 +1,204 @@
-import React, { useState, useEffect } from 'react';
-import { Palette, CheckCircle } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Palette, CheckCircle, Star } from 'lucide-react';
+import { IDE_THEMES, DEFAULT_IDE_THEME_ID, applyIdeTheme } from '@/lib/ideThemes';
 
 export const metadata = {
-    id: 'devstudio.theme-picker',
-    name: 'Theme Picker',
-    version: '1.0.0',
-    description: 'Easily switch between different color themes.',
-    author: 'DevStudio Team',
-    icon: 'Palette',
-    readme: `
+  id: 'devstudio.theme-picker',
+  name: 'Theme Picker',
+  version: '1.1.0',
+  description: 'Apply the same IDE theme system used by Settings.',
+  author: 'DevStudio Team',
+  icon: 'Palette',
+  readme: `
 # Theme Picker
 
 ## Features
-- One-click theme switching
-- Preview themes instantly
+- Uses the same theme source as Settings
+- Keeps editor, terminal, and workspace in sync
+- Highlights Sepia as the focused reading theme
 `
 };
 
 export const settings = [
-    {
-        id: 'theme.autoSave',
-        label: 'Auto Save Theme',
-        type: 'checkbox',
-        default: true,
-        description: 'Save selected theme to local storage',
-        section: 'appearance',
-        extensionId: metadata.id
-    }
+  {
+    id: 'theme.autoSave',
+    label: 'Auto Save Theme',
+    type: 'checkbox',
+    default: true,
+    description: 'Save selected theme to local storage',
+    section: 'appearance',
+    extensionId: metadata.id
+  }
 ];
 
-const themes = [
-    {
-        id: 'dark-modern',
-        name: 'Dark Modern',
-        type: 'dark',
-        vars: {
-            '--ide-bg': '#1e1e1e',
-            '--ide-sidebar': '#252526',
-            '--ide-activitybar': '#333333',
-            '--ide-border': '#3c3c3c',
-            '--ide-fg': '#ffffff',
-            '--ide-fg-secondary': '#cccccc',
-            '--ide-accent': '#007fd4'
-        }
-    },
-    {
-        id: 'light-modern',
-        name: 'Light Modern',
-        type: 'light',
-        vars: {
-            '--ide-bg': '#ffffff',
-            '--ide-sidebar': '#f3f3f3',
-            '--ide-activitybar': '#eeeeee',
-            '--ide-border': '#e5e5e5',
-            '--ide-fg': '#000000',
-            '--ide-fg-secondary': '#616161',
-            '--ide-accent': '#0078d4'
-        }
-    },
-    {
-        id: 'sepia',
-        name: 'Sepia (Reading Mode)',
-        type: 'light',
-        vars: {
-            '--ide-bg': '#f4ecd8',
-            '--ide-sidebar': '#efe7d2',
-            '--ide-activitybar': '#e3dac1',
-            '--ide-border': '#dcd3bd',
-            '--ide-fg': '#5b4636',
-            '--ide-fg-secondary': '#8f7e6f',
-            '--ide-accent': '#b85c38'
-        }
-    },
-    {
-        id: 'github-light',
-        name: 'GitHub Light',
-        type: 'light',
-        vars: {
-            '--ide-bg': '#ffffff',
-            '--ide-sidebar': '#f6f8fa',
-            '--ide-activitybar': '#e1e4e8',
-            '--ide-border': '#d1d5da',
-            '--ide-fg': '#24292e',
-            '--ide-fg-secondary': '#586069',
-            '--ide-accent': '#0366d6'
-        }
-    },
-    {
-        id: 'monokai',
-        name: 'Monokai',
-        type: 'dark',
-        vars: {
-            '--ide-bg': '#272822',
-            '--ide-sidebar': '#1e1f1c',
-            '--ide-activitybar': '#171814',
-            '--ide-border': '#1e1f1c',
-            '--ide-fg': '#f8f8f2',
-            '--ide-fg-secondary': '#cfcfc2',
-            '--ide-accent': '#a6e22e'
-        }
-    },
-    {
-        id: 'dracula',
-        name: 'Dracula',
-        type: 'dark',
-        vars: {
-            '--ide-bg': '#282a36',
-            '--ide-sidebar': '#21222c',
-            '--ide-activitybar': '#191a21',
-            '--ide-border': '#44475a',
-            '--ide-fg': '#f8f8f2',
-            '--ide-fg-secondary': '#6272a4',
-            '--ide-accent': '#bd93f9'
-        }
-    },
-    {
-        id: 'nord',
-        name: 'Nord',
-        type: 'dark',
-        vars: {
-            '--ide-bg': '#2e3440',
-            '--ide-sidebar': '#3b4252',
-            '--ide-activitybar': '#434c5e',
-            '--ide-border': '#4c566a',
-            '--ide-fg': '#eceff4',
-            '--ide-fg-secondary': '#d8dee9',
-            '--ide-accent': '#88c0d0'
-        }
-    },
-    {
-        id: 'solarized-dark',
-        name: 'Solarized Dark',
-        type: 'dark',
-        vars: {
-            '--ide-bg': '#002b36',
-            '--ide-sidebar': '#073642',
-            '--ide-activitybar': '#00212b',
-            '--ide-border': '#073642',
-            '--ide-fg': '#839496',
-            '--ide-fg-secondary': '#586e75',
-            '--ide-accent': '#268bd2'
-        }
-    },
-    {
-        id: 'one-dark-pro',
-        name: 'One Dark Pro',
-        type: 'dark',
-        vars: {
-            '--ide-bg': '#282c34',
-            '--ide-sidebar': '#21252b',
-            '--ide-activitybar': '#1e2127',
-            '--ide-border': '#181a1f',
-            '--ide-fg': '#abb2bf',
-            '--ide-fg-secondary': '#5c6370',
-            '--ide-accent': '#61afef'
-        }
-    }
-];
+const featuredThemeId = 'sepia';
+
+function getStoredSettings() {
+  const savedSettings = localStorage.getItem('devstudio-settings');
+  return savedSettings ? JSON.parse(savedSettings) : {};
+}
+
+function getPreferredExtensionTheme() {
+  return (
+    localStorage.getItem('devstudio-extension-theme') ||
+    localStorage.getItem('devstudio-theme') ||
+    DEFAULT_IDE_THEME_ID
+  );
+}
+
+function persistThemeSelection(themeId) {
+  const parsed = getStoredSettings();
+  localStorage.setItem('devstudio-settings', JSON.stringify({
+    ...parsed,
+    themeSource: 'extension'
+  }));
+  localStorage.setItem('devstudio-extension-theme', themeId);
+}
 
 const ThemePanel = ({ context }) => {
-    const [activeTheme, setActiveTheme] = useState('dark-modern');
+  const [activeTheme, setActiveTheme] = useState(DEFAULT_IDE_THEME_ID);
+  const scrollRef = useRef(null);
+  const scrollTopRef = useRef(0);
 
-    // Load saved theme on mount
-    useEffect(() => {
-        const saved = localStorage.getItem('devstudio-theme');
-        if (saved) {
-            applyTheme(saved, false);
-        }
-    }, []);
+  const orderedThemes = useMemo(() => {
+    const featured = IDE_THEMES.find((theme) => theme.id === featuredThemeId);
+    const rest = IDE_THEMES.filter((theme) => theme.id !== featuredThemeId);
+    return featured ? [featured, ...rest] : IDE_THEMES;
+  }, []);
 
-    const applyTheme = (id, save = true) => {
-        const theme = themes.find(t => t.id === id);
-        if (!theme) return;
+  useEffect(() => {
+    const saved = getPreferredExtensionTheme();
+    setActiveTheme(saved);
+  }, []);
 
-        setActiveTheme(id);
+  const applyThemeSelection = (id) => {
+    scrollTopRef.current = scrollRef.current?.scrollTop || 0;
+    setActiveTheme(id);
+    applyIdeTheme(id, { save: true });
+    persistThemeSelection(id);
+    window.dispatchEvent(new CustomEvent('devstudio:theme-source-change', {
+      detail: { source: 'extension', themeId: id }
+    }));
+    requestAnimationFrame(() => {
+      if (scrollRef.current) {
+        scrollRef.current.scrollTop = scrollTopRef.current;
+      }
+    });
 
-        // console.log('Applying theme:', id, theme.vars);
+    const selected = IDE_THEMES.find((theme) => theme.id === id);
+    if (context.toast && selected) {
+      context.toast.success(`Theme changed to ${selected.name}`, {
+        description: selected.id === featuredThemeId
+          ? 'Sepia keeps contrast softer and more consistent for long coding sessions.'
+          : 'Workspace, editor, terminal, and settings are now using the same theme source.'
+      });
+    }
+  };
 
-        // Apply variables to root
-        const root = document.documentElement;
-
-        Object.entries(theme.vars).forEach(([key, value]) => {
-            root.style.setProperty(key, value);
-        });
-
-        // Add theme type class for CSS targeting
-        root.classList.remove('theme-light', 'theme-dark');
-        root.classList.add(theme.type === 'light' ? 'theme-light' : 'theme-dark');
-
-        // Exclude Monaco editor and Terminal from theme changes
-        // They should always stay dark for better code readability
-        const monacoEditors = document.querySelectorAll('.monaco-editor');
-        const terminals = document.querySelectorAll('.terminal-container, .xterm');
-
-        monacoEditors.forEach(editor => {
-            editor.style.backgroundColor = '#1e1e1e';
-            editor.style.color = '#d4d4d4';
-        });
-
-        terminals.forEach(terminal => {
-            terminal.style.backgroundColor = '#1e1e1e';
-            terminal.style.color = '#cccccc';
-        });
-
-        if (save) {
-            localStorage.setItem('devstudio-theme', id);
-            if (context.toast) {
-                context.toast.success(`Applied theme: ${theme.name}`);
-            }
-        }
-    };
-
-    return (
-        <div className="h-full bg-ide-sidebar text-ide-fg p-3">
-            <div className="text-xs uppercase text-ide-fg-secondary mb-4 font-bold tracking-wide">Installed Themes</div>
-
-            <div className="grid grid-cols-1 gap-2">
-                {themes.map(theme => (
-                    <div key={theme.id}
-                        onClick={() => applyTheme(theme.id)}
-                        className={`p-3 rounded cursor-pointer border transition-all flex items-center justify-between group ${activeTheme === theme.id ? 'bg-ide-activitybar border-ide-accent' : 'border-transparent hover:bg-ide-activitybar'
-                            }`}>
-                        <div className="flex items-center gap-3">
-                            <div className="w-4 h-4 rounded-full border border-ide-fg-secondary/20" style={{ background: theme.vars['--ide-bg'] }}></div>
-                            <span className="text-sm font-medium">{theme.name}</span>
-                        </div>
-                        {activeTheme === theme.id && <CheckCircle size={14} className="text-ide-accent" />}
-                    </div>
-                ))}
-            </div>
+  return (
+    <div
+      ref={scrollRef}
+      onScroll={(event) => {
+        scrollTopRef.current = event.currentTarget.scrollTop;
+      }}
+      className="h-full min-h-0 overflow-y-auto overscroll-contain p-4"
+      style={{
+        background: 'var(--ide-sidebar)',
+        color: 'var(--ide-fg)'
+      }}
+    >
+      <div className="mb-4 flex items-center justify-between">
+        <div>
+          <div
+            className="text-xs font-bold uppercase tracking-[0.18em]"
+            style={{ color: 'var(--ide-fg-secondary)' }}
+          >
+            Installed Themes
+          </div>
+          <div className="mt-1 text-sm" style={{ color: 'var(--ide-fg-secondary)' }}>
+            One source of truth for workspace theming
+          </div>
         </div>
-    );
+        <Palette size={16} style={{ color: 'var(--ide-accent)' }} />
+      </div>
+
+      <div className="grid grid-cols-1 gap-2">
+        {orderedThemes.map((theme) => {
+          const isActive = activeTheme === theme.id;
+          const isFeatured = theme.id === featuredThemeId;
+
+          return (
+            <button
+              key={theme.id}
+              type="button"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => applyThemeSelection(theme.id)}
+              className="w-full p-3 text-left border transition-all duration-150"
+              style={{
+                background: isActive ? 'var(--ide-bg)' : 'transparent',
+                borderColor: isActive ? 'var(--ide-accent)' : 'var(--ide-border)',
+                color: 'var(--ide-fg)',
+                borderRadius: 12
+              }}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex min-w-0 items-center gap-3">
+                  <div
+                    className="h-4 w-4 rounded-full border"
+                    style={{
+                      background: theme.vars['--ide-bg'],
+                      borderColor: theme.vars['--ide-border']
+                    }}
+                  />
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="truncate text-sm font-medium">{theme.name}</span>
+                      {isFeatured && (
+                        <span
+                          className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em]"
+                          style={{
+                            background: 'var(--ide-bg)',
+                            border: '1px solid var(--ide-accent)',
+                            color: 'var(--ide-accent)'
+                          }}
+                        >
+                          <Star size={10} />
+                          Focus
+                        </span>
+                      )}
+                    </div>
+                    <p className="mt-1 text-xs" style={{ color: 'var(--ide-fg-secondary)' }}>
+                      {isFeatured
+                        ? 'Balanced contrast for long sessions and calmer reading.'
+                        : 'Uses the same workspace palette across editor, terminal, and settings.'}
+                    </p>
+                  </div>
+                </div>
+
+                {isActive && <CheckCircle size={16} style={{ color: 'var(--ide-accent)' }} />}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
 };
 
 export const activate = (context) => {
-    context.registerSidebarPanel(
-        'theme-picker',
-        {
-            icon: 'palette',
-            label: 'Themes',
-        },
-        (props) => <ThemePanel context={context} {...props} />
-    );
+  context.registerSidebarPanel(
+    'theme-picker',
+    {
+      icon: 'palette',
+      label: 'Themes',
+    },
+    (props) => <ThemePanel context={context} {...props} />
+  );
 
-    // console.log("Theme Picker Activated");
+  const settings = getStoredSettings();
+  const saved = getPreferredExtensionTheme();
 
-    // Attempt to restore theme on activation
-    const saved = localStorage.getItem('devstudio-theme');
-    if (saved) {
-        const theme = themes.find(t => t.id === saved);
-        if (theme) {
-            const root = document.documentElement;
-            Object.entries(theme.vars).forEach(([key, value]) => {
-                root.style.setProperty(key, value);
-            });
-            // Add theme type class
-            root.classList.remove('theme-light', 'theme-dark');
-            root.classList.add(theme.type === 'light' ? 'theme-light' : 'theme-dark');
-        }
-    }
+  if (settings.themeSource === 'extension') {
+    applyIdeTheme(saved, { save: false });
+  }
 };

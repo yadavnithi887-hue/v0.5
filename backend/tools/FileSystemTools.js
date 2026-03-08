@@ -129,6 +129,17 @@ class FileSystemTools {
             throw new Error(`File already exists: ${TargetFile}. Set Overwrite to true to replace.`);
         }
 
+        // Snapshot: capture original content before writing
+        const originalContent = fs.existsSync(TargetFile) ? fs.readFileSync(TargetFile, 'utf-8') : null;
+        if (this.io) {
+            this.io.emit('ai:file-snapshot', {
+                filePath: TargetFile,
+                originalContent,
+                isNewFile: originalContent === null,
+                timestamp: Date.now()
+            });
+        }
+
         const dir = path.dirname(TargetFile);
         if (!fs.existsSync(dir)) {
             fs.mkdirSync(dir, { recursive: true });
@@ -159,6 +170,16 @@ class FileSystemTools {
 
         let content = fs.readFileSync(TargetFile, 'utf-8');
         console.log(`   File size: ${content.length} chars`);
+
+        // Snapshot: capture original content before writing
+        if (this.io) {
+            this.io.emit('ai:file-snapshot', {
+                filePath: TargetFile,
+                originalContent: content,
+                isNewFile: false,
+                timestamp: Date.now()
+            });
+        }
 
         if (!content.includes(TargetContent)) {
             console.error(`   [FS] Target content NOT FOUND in file!`);
@@ -384,6 +405,16 @@ class FileSystemTools {
 
         let content = fs.readFileSync(TargetFile, 'utf-8');
         console.log(`   File size: ${content.length} chars`);
+
+        // Snapshot: capture original content before writing
+        if (this.io) {
+            this.io.emit('ai:file-snapshot', {
+                filePath: TargetFile,
+                originalContent: content,
+                isNewFile: false,
+                timestamp: Date.now()
+            });
+        }
 
         // Sort chunks by StartLine descending to avoid offset issues
         const sortedChunks = [...ReplacementChunks].sort((a, b) => b.StartLine - a.StartLine);

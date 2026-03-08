@@ -18,22 +18,120 @@ import DebugPanel from '@/components/ide/DebugPanel';
 import SettingsPanel from '@/components/ide/SettingsPanel';
 import AIActivityPanel from '@/components/ide/AIActivityPanel';
 import AIReportView from '@/components/ide/AIReportView';
+import ImagePreviewView from '@/components/ide/ImagePreviewView';
+import RobotCompanion from '@/components/ide/RobotCompanion';
 import CommandPalette from '@/components/ide/CommandPalette';
 import Breadcrumbs from '@/components/ide/Breadcrumbs';
 import { ShortcutsModal, TipsModal, AboutModal, WelcomeModal, ComingSoonToast, GoToLineModal, QuickOpenModal } from '@/components/ide/HelpModals';
 import WhatsNewModal from '@/components/ide/WhatsNewModal';
 import { cn } from '@/lib/utils';
+import { DEFAULT_IDE_THEME_ID, applyIdeTheme } from '@/lib/ideThemes';
 import { toast, Toaster } from 'sonner';
 import { registry } from "@/modules/core/ExtensionRegistry";
+import * as monaco from 'monaco-editor';
+
+const DIAGNOSTIC_EXTENSIONS = new Set([
+  'js', 'jsx', 'ts', 'tsx', 'mjs', 'cjs',
+  'json', 'jsonc', 'css', 'scss', 'less', 'html', 'xml', 'yml', 'yaml'
+]);
+const OFFLINE_DRAFT_PREFIX = 'devstudio-offline-draft:';
+
+const DEFAULT_SETTINGS = {
+  fontSize: 14,
+  fontFamily: "'JetBrains Mono', 'Fira Code', Consolas, monospace",
+  lineHeight: 22,
+  letterSpacing: 0,
+  fontLigatures: true,
+  tabSize: 2,
+  wordWrap: 'off',
+  lineNumbers: 'on',
+  cursorBlinking: 'smooth',
+  cursorStyle: 'line',
+  cursorWidth: 2,
+  insertSpaces: true,
+  renderWhitespace: 'selection',
+  smoothScrolling: true,
+  formatOnSave: false,
+  formatOnPaste: false,
+  bracketPairColorization: true,
+  guidesIndentation: true,
+  matchBrackets: 'always',
+  autoClosingBrackets: 'languageDefined',
+  autoClosingQuotes: 'languageDefined',
+  quickSuggestions: true,
+  inlineSuggest: true,
+  stickyScroll: false,
+  mouseWheelZoom: true,
+  occurrencesHighlight: true,
+  links: true,
+  minimap: true,
+  minimapSide: 'right',
+  minimapScale: 1,
+  minimapShowSlider: 'mouseover',
+  scrollbar: 'auto',
+  folding: true,
+  foldingHighlight: true,
+  renderLineHighlight: 'line',
+  showBreadcrumbs: true,
+  activityBarVisible: true,
+  statusBarVisible: true,
+  sidebarPosition: 'left',
+  commandCenter: true,
+  ideTheme: DEFAULT_IDE_THEME_ID,
+  themeSource: 'settings',
+  uiFontFamily: '"Inter", "Segoe UI", system-ui, sans-serif',
+  uiDensity: 'comfortable',
+  showWelcomeOnStartup: true,
+  autoSave: 'off',
+  autoSaveDelay: 1000,
+  confirmDelete: true,
+  trimTrailingWhitespace: false,
+  insertFinalNewline: false,
+  trimFinalNewlines: false,
+  hotExit: true,
+  defaultLanguage: 'plaintext',
+  restoreRecentWorkspace: true,
+  explorerConfirmDragAndDrop: false,
+  terminalFontSize: 14,
+  terminalFontFamily: "'Fira Code', monospace",
+  terminalCursorBlinking: true,
+  terminalCursorStyle: 'block',
+  terminalCursorWidth: 2,
+  terminalLineHeight: 1.2,
+  terminalScrollback: 1000,
+  terminalCopyOnSelection: false,
+  terminalBellSound: false,
+  terminalRendererType: 'canvas',
+  vimMode: false,
+  emacsMode: false,
+  multiCursorModifier: 'alt',
+  wordSeparators: '`~!@#$%^&*()-=+[{]}\\|;:\'",.<>/?',
+  commandPalettePreserveInput: true,
+  telemetryEnabled: false,
+  crashReporter: false,
+  privacyMaskPaths: true,
+  reducedMotion: false,
+  largeClickTargets: false
+};
 
 /**
  * Layout.jsx - Main IDE Layout
- * ✅ Fixed: Internal Extension System Integration
- * ✅ Registry-driven UI updates for StatusBar & Editor Buttons
+ * âœ… Fixed: Internal Extension System Integration
+ * âœ… Registry-driven UI updates for StatusBar & Editor Buttons
 
  */
 
 export default function Layout() {
+  const isThemeExtensionEnabled = React.useCallback(() => {
+    try {
+      const saved = localStorage.getItem('extension_states');
+      const states = saved ? JSON.parse(saved) : {};
+      return states['devstudio.theme-picker'] !== false;
+    } catch {
+      return true;
+    }
+  }, []);
+
   // Core file/project state
   const [files, setFiles] = useState([]);
   const [folders, setFolders] = useState([]);
@@ -55,70 +153,7 @@ export default function Layout() {
   // Settings - Complete default settings for all categories
   const [settings, setSettings] = useState(() => {
     const saved = localStorage.getItem('devstudio-settings');
-    const defaults = {
-      // Editor Settings
-      fontSize: 14,
-      fontFamily: "'Fira Code', Consolas, monospace",
-      tabSize: 2,
-      wordWrap: 'off',
-      lineNumbers: 'on',
-      cursorBlinking: 'smooth',
-      cursorStyle: 'line',
-      cursorWidth: 2,
-      insertSpaces: true,
-      renderWhitespace: 'selection',
-      smoothScrolling: true,
-      formatOnSave: false,
-      formatOnPaste: false,
-      bracketPairColorization: true,
-      guidesIndentation: true,
-      autoClosingBrackets: 'languageDefined',
-      autoClosingQuotes: 'languageDefined',
-
-      // Appearance Settings
-      minimap: true,
-      minimapSide: 'right',
-      minimapScale: 1,
-      minimapShowSlider: 'mouseover',
-      scrollbar: 'auto',
-      folding: true,
-      foldingHighlight: true,
-      renderLineHighlight: 'line',
-      showBreadcrumbs: true,
-      activityBarVisible: true,
-      statusBarVisible: true,
-      sidebarPosition: 'left',
-
-      // Files Settings
-      autoSave: 'off',
-      autoSaveDelay: 1000,
-      confirmDelete: true,
-      trimTrailingWhitespace: false,
-      insertFinalNewline: false,
-      trimFinalNewlines: false,
-      hotExit: true,
-      defaultLanguage: 'plaintext',
-
-      // Terminal Settings
-      terminalFontSize: 14,
-      terminalFontFamily: "'Fira Code', monospace",
-      terminalCursorBlinking: true,
-      terminalCursorStyle: 'block',
-      terminalScrollback: 1000,
-      terminalCopyOnSelection: false,
-      terminalBellSound: false,
-
-      // Keyboard Settings
-      vimMode: false,
-      emacsMode: false,
-      multiCursorModifier: 'alt',
-      wordSeparators: '`~!@#$%^&*()-=+[{]}\\|;:\'",.<>/?',
-
-      // Privacy Settings
-      telemetryEnabled: false,
-      crashReporter: false,
-    };
-    return saved ? { ...defaults, ...JSON.parse(saved) } : defaults;
+    return saved ? { ...DEFAULT_SETTINGS, ...JSON.parse(saved) } : DEFAULT_SETTINGS;
   });
   const [settingsUnsaved, setSettingsUnsaved] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
@@ -131,6 +166,61 @@ export default function Layout() {
   const [showCommandPalette, setShowCommandPalette] = useState(false);
   const [commandPaletteMode, setCommandPaletteMode] = useState('command'); // 'command' or 'file'
   const [showQuickOpen, setShowQuickOpen] = useState(false);
+
+  useEffect(() => {
+    const canUseExtensionTheme = settings.themeSource === 'extension' && isThemeExtensionEnabled();
+    const effectiveThemeId = canUseExtensionTheme
+      ? (localStorage.getItem('devstudio-extension-theme') || settings.ideTheme || DEFAULT_IDE_THEME_ID)
+      : (settings.ideTheme || DEFAULT_IDE_THEME_ID);
+
+    applyIdeTheme(effectiveThemeId, { save: false });
+
+    const root = document.documentElement;
+    root.style.setProperty('--ui-font-family', settings.uiFontFamily || DEFAULT_SETTINGS.uiFontFamily);
+    root.style.setProperty('--editor-font-family', settings.fontFamily || DEFAULT_SETTINGS.fontFamily);
+    root.dataset.density = settings.uiDensity || DEFAULT_SETTINGS.uiDensity;
+    root.classList.toggle('reduce-motion', settings.reducedMotion === true);
+    root.classList.toggle('large-click-targets', settings.largeClickTargets === true);
+  }, [
+    settings.ideTheme,
+    settings.themeSource,
+    isThemeExtensionEnabled,
+    settings.uiFontFamily,
+    settings.fontFamily,
+    settings.uiDensity,
+    settings.reducedMotion,
+    settings.largeClickTargets
+  ]);
+
+  useEffect(() => {
+    const handleThemeSourceChange = (event) => {
+      const { source, themeId } = event.detail || {};
+      if (!source) return;
+
+      const canUseExtensionTheme = source === 'extension' && isThemeExtensionEnabled();
+      const nextSource = canUseExtensionTheme ? source : 'settings';
+      const nextThemeId = themeId || settings.ideTheme || DEFAULT_IDE_THEME_ID;
+
+      setSettings((prev) => ({
+        ...prev,
+        themeSource: nextSource,
+        ...(nextSource === 'settings' ? { ideTheme: nextThemeId } : {})
+      }));
+
+      setSettingsUnsaved(nextSource === 'settings');
+    };
+
+    window.addEventListener('devstudio:theme-source-change', handleThemeSourceChange);
+    return () => window.removeEventListener('devstudio:theme-source-change', handleThemeSourceChange);
+  }, [isThemeExtensionEnabled, settings.ideTheme]);
+
+  useEffect(() => {
+    if (settings.activityBarVisible === false) {
+      setSettings((prev) => ({ ...prev, activityBarVisible: true }));
+      setSettingsUnsaved(true);
+    }
+  }, [settings.activityBarVisible]);
+
   const [showGoToLine, setShowGoToLine] = useState(false);
   const [showWelcome, setShowWelcome] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
@@ -144,7 +234,7 @@ export default function Layout() {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewMaximized, setPreviewMaximized] = useState(false);
 
-  // ✅ Registry-driven UI items (StatusBar & Editor Buttons)
+  // âœ… Registry-driven UI items (StatusBar & Editor Buttons)
   const [statusBarItems, setStatusBarItems] = useState([]);
   const [extEditorButtons, setExtEditorButtons] = useState([]);
 
@@ -170,6 +260,210 @@ export default function Layout() {
   const [diffViewActive, setDiffViewActive] = useState(false);
   const [diffOriginalContent, setDiffOriginalContent] = useState('');
   const [diffLabel, setDiffLabel] = useState('');
+  const [isAiDiff, setIsAiDiff] = useState(false);
+  const aiDiffSnapshotsRef = React.useRef({});  // { filePath: { originalContent, isNewFile } }
+  const activeFileRef = React.useRef(null);
+  const workspaceProblemsRef = React.useRef([]);
+  const editorProblemsRef = React.useRef([]);
+  const diagnosticsRunIdRef = React.useRef(0);
+
+  const mergeProblems = useCallback((workspaceList = [], editorList = []) => {
+    const map = new Map();
+    [...workspaceList, ...editorList].forEach((p) => {
+      if (!p || !p.file || !p.message) return;
+      const key = `${p.file}|${p.line || 0}|${p.column || 0}|${p.severity || ''}|${p.message}`;
+      if (!map.has(key)) map.set(key, p);
+    });
+    return Array.from(map.values());
+  }, []);
+
+  const syncProblems = useCallback(() => {
+    setProblems(mergeProblems(workspaceProblemsRef.current, editorProblemsRef.current));
+  }, [mergeProblems]);
+
+  const getLanguageFromName = useCallback((name = '') => {
+    const lower = String(name).toLowerCase();
+    if (lower.endsWith('.d.ts')) return 'typescript';
+    const ext = lower.includes('.') ? lower.split('.').pop() : '';
+    const map = {
+      js: 'javascript',
+      jsx: 'javascript',
+      mjs: 'javascript',
+      cjs: 'javascript',
+      ts: 'typescript',
+      tsx: 'typescript',
+      json: 'json',
+      jsonc: 'json',
+      css: 'css',
+      scss: 'scss',
+      less: 'less',
+      html: 'html',
+      xml: 'xml',
+      yml: 'yaml',
+      yaml: 'yaml',
+    };
+    return map[ext] || 'plaintext';
+  }, []);
+
+  const toMonacoUri = useCallback((pathValue) => {
+    const normalized = String(pathValue || '').replace(/\\/g, '/');
+    if (!normalized) return null;
+    if (/^[a-zA-Z]:\//.test(normalized)) {
+      return monaco.Uri.parse(`file:///${normalized}`);
+    }
+    return monaco.Uri.parse(`file://${normalized.startsWith('/') ? '' : '/'}${normalized}`);
+  }, []);
+
+  const handleEditorValidate = useCallback((markers) => {
+    editorProblemsRef.current = Array.isArray(markers) ? markers : [];
+    syncProblems();
+  }, [syncProblems]);
+
+  const runWorkspaceDiagnostics = useCallback(async () => {
+    const runId = ++diagnosticsRunIdRef.current;
+    const rootPath = localStorage.getItem('devstudio-last-project');
+    if (!rootPath || !window.electronAPI) {
+      workspaceProblemsRef.current = [];
+      syncProblems();
+      return;
+    }
+
+    const candidates = files
+      .filter((f) => {
+        if (!f?.name) return false;
+        const lower = String(f.name).toLowerCase();
+        const ext = lower.includes('.') ? lower.split('.').pop() : '';
+        return DIAGNOSTIC_EXTENSIONS.has(ext) || lower.endsWith('.d.ts');
+      })
+      .sort((a, b) => {
+        const aActive = activeFile?.id === a.id ? 1 : 0;
+        const bActive = activeFile?.id === b.id ? 1 : 0;
+        if (aActive !== bActive) return bActive - aActive;
+        const aLoaded = typeof a.content === 'string' ? 1 : 0;
+        const bLoaded = typeof b.content === 'string' ? 1 : 0;
+        return bLoaded - aLoaded;
+      })
+      .slice(0, 180);
+
+    if (candidates.length === 0) {
+      workspaceProblemsRef.current = [];
+      syncProblems();
+      return;
+    }
+
+    const readTargets = candidates.filter((f) => typeof f.content !== 'string' && (f.realPath || f.id));
+    const loadedContent = new Map();
+    const chunkSize = 36;
+    for (let i = 0; i < readTargets.length; i += chunkSize) {
+      const chunk = readTargets.slice(i, i + chunkSize);
+      const result = await Promise.all(
+        chunk.map(async (f) => {
+          try {
+            const content = await window.electronAPI.readFile(f.realPath || f.id);
+            return [f.id, typeof content === 'string' ? content : ''];
+          } catch {
+            return [f.id, ''];
+          }
+        })
+      );
+      result.forEach(([id, content]) => loadedContent.set(id, content));
+      if (runId !== diagnosticsRunIdRef.current) return;
+    }
+
+    if (loadedContent.size > 0) {
+      setFiles((prev) => prev.map((f) => (loadedContent.has(f.id) ? { ...f, content: loadedContent.get(f.id) } : f)));
+    }
+
+    const uriSet = new Set();
+    const uriToFilePath = new Map();
+    candidates.forEach((f) => {
+      const fullPath = f.realPath || f.id;
+      const uri = toMonacoUri(fullPath);
+      if (!uri) return;
+      uriSet.add(uri.toString());
+      uriToFilePath.set(uri.toString(), String(fullPath || ''));
+      const language = getLanguageFromName(f.name || '');
+      const content = typeof f.content === 'string' ? f.content : (loadedContent.get(f.id) || '');
+      const model = monaco.editor.getModel(uri);
+      if (model) {
+        if (model.getValue() !== content) model.setValue(content);
+        if (model.getLanguageId() !== language && language !== 'plaintext') {
+          monaco.editor.setModelLanguage(model, language);
+        }
+      } else {
+        monaco.editor.createModel(content, language, uri);
+      }
+    });
+    // Multi-pass: collect at 150ms (JSON/CSS), 600ms (JS syntax), 1500ms (TS semantic)
+    const WS_DIAG_LANG2 = new Set(['javascript', 'typescript', 'json', 'css', 'scss', 'less', 'html']);
+    const collectAll = () => {
+      const mm = new Map();
+      monaco.editor.getModelMarkers({}).forEach((m) => {
+        const rk = m.resource?.toString?.() || '';
+        if (!uriSet.has(rk)) return;
+        const mdl2 = m.resource ? monaco.editor.getModel(m.resource) : null;
+        const ml = mdl2?.getLanguageId?.() || '';
+        if (ml && !WS_DIAG_LANG2.has(ml)) return;
+        const p = String(m.resource?.path || '').replace(/\\/g, '/');
+        const fn = p.split('/').pop() || 'unknown';
+        const sv = m.severity === monaco.MarkerSeverity.Error ? 'Error' : 'Warning';
+        const cd = typeof m.code === 'string' ? m.code : m.code?.value;
+        const src = m.source || (ml === 'json' ? 'JSON' : ml === 'css' || ml === 'scss' || ml === 'less' ? 'CSS' : ml === 'html' ? 'HTML' : 'TS/JS');
+        const it = { file: fn, filePath: uriToFilePath.get(rk) || p, message: m.message, line: m.startLineNumber || 1, column: m.startColumn || 1, severity: sv, source: src, code: cd };
+        const k = `${it.file}|${it.line}|${it.column}|${it.message}|${it.severity}`;
+        if (!mm.has(k)) mm.set(k, it);
+      });
+      return Array.from(mm.values());
+    };
+    for (const delay of [150, 600, 1500]) {
+      await new Promise((r) => setTimeout(r, delay));
+      if (runId !== diagnosticsRunIdRef.current) return;
+      workspaceProblemsRef.current = collectAll();
+      syncProblems();
+    }
+
+  }, [files, activeFile?.id, getLanguageFromName, syncProblems, toMonacoUri]);
+
+  useEffect(() => {
+    activeFileRef.current = activeFile || null;
+  }, [activeFile]);
+
+  const getDraftKey = useCallback((fileLike) => {
+    const filePath = String(fileLike?.realPath || fileLike?.id || '').trim();
+    if (!filePath || filePath.startsWith('ai-artifact:') || filePath === 'welcome') return null;
+    return `${OFFLINE_DRAFT_PREFIX}${filePath}`;
+  }, []);
+
+  const loadOfflineDraft = useCallback((fileLike) => {
+    try {
+      const key = getDraftKey(fileLike);
+      if (!key) return null;
+      const cached = localStorage.getItem(key);
+      return typeof cached === 'string' ? cached : null;
+    } catch {
+      return null;
+    }
+  }, [getDraftKey]);
+
+  const storeOfflineDraft = useCallback((fileLike, content) => {
+    try {
+      const key = getDraftKey(fileLike);
+      if (!key) return;
+      localStorage.setItem(key, String(content ?? ''));
+    } catch {
+      // Ignore localStorage quota/access issues.
+    }
+  }, [getDraftKey]);
+
+  const clearOfflineDraft = useCallback((fileLike) => {
+    try {
+      const key = getDraftKey(fileLike);
+      if (!key) return;
+      localStorage.removeItem(key);
+    } catch {
+      // Ignore localStorage access issues.
+    }
+  }, [getDraftKey]);
 
   // Sidebar resizing handlers
   const startResizing = useCallback(() => {
@@ -197,11 +491,11 @@ export default function Layout() {
   }, [resize, stopResizing]);
 
   // Welcome modal on first load
-  // ✅ FINAL: Single Combined useEffect for Extension System
+  // âœ… FINAL: Single Combined useEffect for Extension System
   useEffect(() => {
-    // console.log('🎬 Layout: Setting up extensions...');
+    // console.log('ðŸŽ¬ Layout: Setting up extensions...');
 
-    // 1️⃣ Create FULL context for extensions
+    // 1ï¸âƒ£ Create FULL context for extensions
     const context = {
       toast,
       getSettings: () => settings,
@@ -218,9 +512,9 @@ export default function Layout() {
       executeCommand: (id, args) => registry.executeCommand(id, args)
     };
 
-    // 2️⃣ Register listeners FIRST
+    // 2ï¸âƒ£ Register listeners FIRST
     const removeStatus = registry.onStatusBarUpdate((item) => {
-      // console.log('📥 Layout: Received status bar item:', item);
+      // console.log('ðŸ“¥ Layout: Received status bar item:', item);
       setStatusBarItems(prev => {
         const exists = prev.find(i => i.id === item.id);
         if (exists) {
@@ -231,29 +525,44 @@ export default function Layout() {
     });
 
     const removeEditor = registry.onEditorButtonUpdate((btn) => {
-      // console.log('📥 Layout: Received editor button:', btn);
+      // console.log('ðŸ“¥ Layout: Received editor button:', btn);
       setExtEditorButtons(prev => {
         if (prev.find(b => b.id === btn.id)) return prev;
         return [...prev, btn];
       });
     });
+    const syncRegistryUI = () => {
+      setExtSidebarItems(registry.getSidebarItems());
+      setStatusBarItems(registry.getStatusBarItems());
+      setExtEditorButtons(registry.getEditorButtons());
+      setActiveView((currentView) => {
+        const coreViews = ['explorer', 'search', 'git', 'debug', 'extensions', 'ai-gateway', 'settings'];
+        if (coreViews.includes(currentView)) return currentView;
+        return registry.getSidebarPanel(currentView) ? currentView : 'explorer';
+      });
+    };
 
-    // 3️⃣ Initialize extensions
-    // console.log('⚡ Layout: Initializing registry...');
+    const removeRegistryUpdate = registry.onRegistryUpdate(syncRegistryUI);
+
+
+    // 3ï¸âƒ£ Initialize extensions
+    // console.log('âš¡ Layout: Initializing registry...');
     registry.initialize(context);
 
-    // 4️⃣ Get sidebar items
+    // 4ï¸âƒ£ Get sidebar items
     const sidebarItems = registry.getSidebarItems();
-    // console.log('📋 Layout: Loaded sidebar items:', sidebarItems);
+    // console.log('ðŸ“‹ Layout: Loaded sidebar items:', sidebarItems);
     setExtSidebarItems(sidebarItems);
+    syncRegistryUI();
 
-    // console.log('✅ Layout: Extensions setup complete');
+    // console.log('âœ… Layout: Extensions setup complete');
 
-    // 5️⃣ Cleanup on unmount
+    // 5ï¸âƒ£ Cleanup on unmount
     return () => {
-      // console.log('🧹 Layout: Cleaning up extension listeners');
+      // console.log('ðŸ§¹ Layout: Cleaning up extension listeners');
       try { removeStatus(); } catch (e) { console.error(e); }
       try { removeEditor(); } catch (e) { console.error(e); }
+      try { removeRegistryUpdate(); } catch (e) { console.error(e); }
     };
   }, [activeFile, settings, sidebarOpen]); // Dependencies updated
 
@@ -287,25 +596,38 @@ export default function Layout() {
 
   // --- Helper: Refresh Active File Content ---
   const refreshActiveFile = useCallback(async () => {
-    if (!activeFile || !window.electronAPI) return;
+    const current = activeFileRef.current;
+    if (!current || !window.electronAPI) return;
     try {
-      const content = await window.electronAPI.readFile(activeFile.realPath || activeFile.path);
+      const content = await window.electronAPI.readFile(current.realPath || current.path);
       if (typeof content === 'string') {
-        // Update editor content
-        updateEditorContent(content);
-        // Also update file in file list
-        setFiles(prev => prev.map(f => f.id === activeFile.id ? { ...f, content } : f));
-        // console.log('🔄 Active file content refreshed:', activeFile.name);
+        setFiles(prev => prev.map(f => f.id === current.id ? { ...f, content } : f));
+        setActiveFile(prev => (prev?.id === current.id ? { ...prev, content } : prev));
       }
     } catch (error) {
       console.error('Failed to refresh active file:', error);
     }
-  }, [activeFile]);
+  }, []);
 
   // Auto-load last project
   useEffect(() => {
     loadLastProject();
   }, [loadLastProject]);
+
+  // Background workspace diagnostics (project-wide)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      runWorkspaceDiagnostics();
+    }, 80);
+    return () => clearTimeout(timer);
+  }, [files, folders, runWorkspaceDiagnostics]);
+
+  useEffect(() => {
+    if (!activeFile) {
+      editorProblemsRef.current = [];
+      syncProblems();
+    }
+  }, [activeFile, syncProblems]);
 
   // --- Helper: Refresh Directory Tree (Preserving Content) ---
   const refreshDirectoryTree = useCallback(async () => {
@@ -329,20 +651,20 @@ export default function Layout() {
             return newF;
           });
         });
-        // console.log('🔄 Directory tree refreshed');
+        // console.log('ðŸ”„ Directory tree refreshed');
       }
     } catch (error) {
       console.error('Failed to refresh directory tree:', error);
     }
   }, []);
 
-  // ⚡ Electron IPC File Watcher (Chokidar)
+  // âš¡ Electron IPC File Watcher (Chokidar)
   useEffect(() => {
     if (!window.electronAPI?.onFileChanged) return;
 
     let refreshTimeout;
     const cleanup = window.electronAPI.onFileChanged(() => {
-      // console.log('🔔 Layout: Received fs:changed from Electron');
+      // console.log('ðŸ”” Layout: Received fs:changed from Electron');
       clearTimeout(refreshTimeout);
       refreshTimeout = setTimeout(() => {
         refreshDirectoryTree();
@@ -354,6 +676,35 @@ export default function Layout() {
       cleanup();
     };
   }, [refreshDirectoryTree]);
+
+  const saveCurrentFile = useCallback(async (fileLike, { silentSuccess = false } = {}) => {
+    if (!fileLike || fileLike.type === 'welcome' || String(fileLike.id || '').startsWith('ai-artifact:')) return false;
+    const targetPath = fileLike.realPath || fileLike.path || fileLike.id;
+    const targetContent = String(fileLike.content ?? '');
+
+    if (!window.electronAPI?.saveFile || !targetPath) {
+      storeOfflineDraft(fileLike, targetContent);
+      toast.error('Disk save unavailable. Draft cached locally for offline use.');
+      return false;
+    }
+
+    try {
+      const res = await window.electronAPI.saveFile(targetPath, targetContent);
+      if (!res?.success) throw new Error(res?.error || 'Save failed');
+      clearOfflineDraft(fileLike);
+      setUnsavedFiles((prev) => {
+        const next = new Set(prev);
+        next.delete(fileLike.id);
+        return next;
+      });
+      if (!silentSuccess) toast.success('File Saved!');
+      return true;
+    } catch (err) {
+      storeOfflineDraft(fileLike, targetContent);
+      toast.error(`Save failed. Draft cached locally. ${err?.message ? `(${err.message})` : ''}`.trim());
+      return false;
+    }
+  }, [clearOfflineDraft, storeOfflineDraft]);
 
 
   // Keyboard shortcuts
@@ -390,14 +741,7 @@ export default function Layout() {
             break;
           case 's':
             e.preventDefault();
-            if (activeFile && window.electronAPI) {
-              window.electronAPI.saveFile(activeFile.realPath, activeFile.content).then(res => {
-                if (res.success) {
-                  toast.success('File Saved!');
-                  setUnsavedFiles(prev => { const s = new Set(prev); s.delete(activeFile.id); return s; });
-                } else toast.error('Save failed');
-              });
-            }
+            if (activeFile) saveCurrentFile(activeFile);
             break;
           case 'b':
             e.preventDefault(); setSidebarOpen(prev => !prev);
@@ -411,19 +755,37 @@ export default function Layout() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [activeFile, showCreateModal, showQuickOpen, showGoToLine, showCommandPalette, deleteTarget, sidebarOpen]);
+  }, [activeFile, showCreateModal, showQuickOpen, showGoToLine, showCommandPalette, deleteTarget, sidebarOpen, saveCurrentFile]);
 
-  // ⚡ Socket.IO Connection for Active File Refresh (AI/Backend direct edits)
+  // âš¡ Socket.IO Connection for Active File Refresh (AI/Backend direct edits)
   useEffect(() => {
-    const socket = io('http://localhost:3001');
+    const socket = io('http://localhost:3001', {
+      transports: ['websocket'],
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 500,
+      reconnectionDelayMax: 2500,
+      timeout: 20000,
+      query: { client: 'layout-fs-refresh' },
+    });
 
     socket.on('connect', () => {
-      // console.log('🔌 Layout: Connected to Backend Socket');
+      // console.log('ðŸ”Œ Layout: Connected to Backend Socket');
     });
 
     let refreshTimeout;
+    socket.on('disconnect', (reason) => {
+      console.warn(`[SOCKET][layout-fs-refresh] disconnected: ${reason}`);
+    });
+    socket.on('connect_error', (err) => {
+      console.error(`[SOCKET][layout-fs-refresh] connect_error: ${err?.message || 'unknown error'}`);
+    });
+    socket.io.on('reconnect_attempt', (attempt) => {
+      console.warn(`[SOCKET][layout-fs-refresh] reconnect attempt ${attempt}`);
+    });
+
     socket.on('fs:refresh', (data) => {
-      // console.log('🔄 Layout: Received fs:refresh event', data);
+      // console.log('ðŸ”„ Layout: Received fs:refresh event', data);
 
       // Debounce refresh - but keep it fast (100ms)
       clearTimeout(refreshTimeout);
@@ -441,9 +803,48 @@ export default function Layout() {
       }, 100);
     });
 
+    // Listen for AI file snapshots - store original content for diff review
+    socket.on('ai:file-snapshot', (data) => {
+      if (!data?.filePath) return;
+      const snapshots = aiDiffSnapshotsRef.current;
+      // Only keep the first snapshot per file (the true original)
+      if (!snapshots[data.filePath]) {
+        snapshots[data.filePath] = {
+          originalContent: data.originalContent,
+          isNewFile: data.isNewFile || false,
+          timestamp: data.timestamp || Date.now()
+        };
+      }
+    });
+
+    // AI Auto-Verify: respond to backend's diagnostics:request with current problems
+    socket.on('diagnostics:request', async (data) => {
+      console.log('[DIAGNOSTICS] Backend requested problems data');
+      // Trigger a fresh workspace scan and wait for Monaco to finish
+      try {
+        await runWorkspaceDiagnostics();
+        // Give Monaco extra time to process markers
+        await new Promise(r => setTimeout(r, 2000));
+      } catch (e) {
+        console.error('[DIAGNOSTICS] Scan error:', e);
+      }
+      // Send current problems back to backend
+      socket.emit('diagnostics:response', {
+        problems: workspaceProblemsRef.current.concat(editorProblemsRef.current),
+        requestId: data?.requestId,
+        timestamp: Date.now()
+      });
+    });
+
     return () => {
       clearTimeout(refreshTimeout);
       socket.off('fs:refresh');
+      socket.off('ai:file-snapshot');
+      socket.off('diagnostics:request');
+      socket.off('connect');
+      socket.off('disconnect');
+      socket.off('connect_error');
+      socket.io.off('reconnect_attempt');
       socket.disconnect();
     };
   }, [refreshActiveFile, refreshDirectoryTree]);
@@ -531,8 +932,8 @@ export default function Layout() {
         return;
       }
 
-      setOpenFiles((prev) => (prev.find((f) => f.id === file.id) ? prev : [...prev, file]));
-      setActiveFile(file);
+      // Use handleFileClick to ensure content is actually loaded from disk
+      handleFileClick(file);
     };
 
     window.addEventListener('devstudio:open-file-ref', handler);
@@ -547,15 +948,43 @@ export default function Layout() {
       return;
     }
 
-    if (!file.content && window.electronAPI) {
+    let resolvedContent = typeof file.content === 'string' ? file.content : null;
+    let diskReadSucceeded = false;
+    let diskContent = '';
+    if (window.electronAPI) {
       try {
         const content = await window.electronAPI.readFile(file.realPath || file.id);
-        file.content = content;
-        setFiles(prev => prev.map(f => f.id === file.id ? { ...f, content } : f));
+        if (typeof content === 'string') {
+          diskReadSucceeded = true;
+          diskContent = content;
+        }
       } catch (e) { console.error(e); }
     }
-    if (!openFiles.find(f => f.id === file.id)) setOpenFiles(prev => [...prev, file]);
-    setActiveFile(file);
+
+    const cachedDraft = loadOfflineDraft(file);
+    if (diskReadSucceeded) {
+      resolvedContent = diskContent;
+      // Clean stale empty drafts if real file has content.
+      if (typeof cachedDraft === 'string' && cachedDraft.length === 0 && diskContent.length > 0) {
+        clearOfflineDraft(file);
+      }
+    } else if (typeof cachedDraft === 'string') {
+      resolvedContent = cachedDraft;
+      setUnsavedFiles((prev) => new Set(prev).add(file.id));
+    }
+    if (resolvedContent === null) resolvedContent = '';
+
+    const updatedFile = resolvedContent !== null ? { ...file, content: resolvedContent } : file;
+    if (resolvedContent !== null) {
+      setFiles(prev => prev.map(f => f.id === file.id ? { ...f, content: resolvedContent } : f));
+    }
+
+    setOpenFiles(prev => {
+      const exists = prev.find(f => f.id === file.id);
+      if (!exists) return [...prev, updatedFile];
+      return prev.map(f => (f.id === file.id ? { ...f, ...(resolvedContent !== null ? { content: resolvedContent } : {}) } : f));
+    });
+    setActiveFile(updatedFile);
   };
 
   // Content change
@@ -563,7 +992,11 @@ export default function Layout() {
     setFiles(prev => prev.map(f => f.id === fileId ? { ...f, content } : f));
     if (activeFile?.id === fileId) setActiveFile(prev => ({ ...prev, content }));
     setUnsavedFiles(prev => new Set(prev).add(fileId));
-  }, [activeFile?.id]);
+    const current = activeFile?.id === fileId
+      ? { ...activeFile, content }
+      : (openFiles.find((f) => f.id === fileId) || files.find((f) => f.id === fileId));
+    if (current) storeOfflineDraft(current, content);
+  }, [activeFile, openFiles, files, storeOfflineDraft]);
 
   // Create file / folder direct helpers (calls into electronAPI)
   const handleCreateFileDirect = async (arg1, arg2) => {
@@ -760,13 +1193,28 @@ export default function Layout() {
   };
 
   // Navigate from problems list with severity highlighting
-  const handleNavigateProblem = (filename, line, severity) => {
-    const targetFile = files.find(f => f.name === filename || f.path?.endsWith(filename));
+  const handleNavigateProblem = async (fileOrPath, line, severity) => {
+    const normalize = (p) => String(p || '').replace(/\\/g, '/').toLowerCase();
+    const needle = normalize(fileOrPath);
+    let targetFile = null;
+
+    if (needle.includes('/')) {
+      targetFile = files.find((f) => normalize(f.realPath || f.id) === needle);
+      if (!targetFile) {
+        targetFile = files.find((f) => normalize(f.realPath || f.id).endsWith(`/${needle.split('/').pop()}`));
+      }
+    } else {
+      targetFile = files.find((f) => String(f.name || '').toLowerCase() === needle);
+      if (!targetFile) targetFile = files.find((f) => normalize(f.path).endsWith(`/${needle}`));
+    }
+
     if (targetFile) {
-      handleFileClick(targetFile);
+      await handleFileClick(targetFile);
       setFocusLine(line);
-      setFocusSeverity(severity || 'Error'); // Store severity for CodeEditor
-    } else toast.error(`File ${filename} not found`);
+      setFocusSeverity(severity || 'Error');
+    } else {
+      toast.error(`File ${fileOrPath} not found`);
+    }
   };
 
   // Apply code from AIChat or other sources
@@ -886,14 +1334,7 @@ export default function Layout() {
       case 'showWhatsNew': setShowWhatsNew(true); break;
 
       case 'save':
-        if (activeFile && window.electronAPI) {
-          window.electronAPI.saveFile(activeFile.realPath, activeFile.content).then(res => {
-            if (res.success) {
-              toast.success('File Saved!');
-              setUnsavedFiles(prev => { const s = new Set(prev); s.delete(activeFile.id); return s; });
-            } else toast.error('Save failed');
-          });
-        }
+        if (activeFile) saveCurrentFile(activeFile);
         break;
 
       // NEW: Save As - save with a new name/location
@@ -911,6 +1352,8 @@ export default function Layout() {
                   setOpenFiles(prev => prev.map(f => f.id === activeFile.id ? updatedFile : f));
                   setActiveFile(updatedFile);
                   setUnsavedFiles(prev => { const s = new Set(prev); s.delete(activeFile.id); return s; });
+                  clearOfflineDraft(activeFile);
+                  clearOfflineDraft(updatedFile);
                 } else toast.error('Save failed');
               });
             }
@@ -922,18 +1365,15 @@ export default function Layout() {
 
       // NEW: Save All - save all unsaved files
       case 'saveAll':
-        if (window.electronAPI && unsavedFiles.size > 0) {
-          const savePromises = Array.from(unsavedFiles).map(fileId => {
-            const file = openFiles.find(f => f.id === fileId);
-            if (file) {
-              return window.electronAPI.saveFile(file.realPath, file.content);
-            }
-            return Promise.resolve({ success: true });
+        if (unsavedFiles.size > 0) {
+          const savePromises = Array.from(unsavedFiles).map((fileId) => {
+            const file = openFiles.find((f) => f.id === fileId) || files.find((f) => f.id === fileId);
+            if (!file) return Promise.resolve(false);
+            return saveCurrentFile(file, { silentSuccess: true });
           });
-          Promise.all(savePromises).then(results => {
-            const successCount = results.filter(r => r.success).length;
-            toast.success(`Saved ${successCount} file(s)`);
-            setUnsavedFiles(new Set());
+          Promise.all(savePromises).then((results) => {
+            const successCount = results.filter(Boolean).length;
+            if (successCount > 0) toast.success(`Saved ${successCount} file(s)`);
           });
         } else {
           toast.info('No unsaved files');
@@ -981,7 +1421,85 @@ export default function Layout() {
     setDiffViewActive(false);
     setDiffOriginalContent('');
     setDiffLabel('');
+    setIsAiDiff(false);
   };
+
+  // AI Diff: Accept — keep current file content, close diff
+  const handleAcceptAiDiff = () => {
+    if (activeFile?.realPath) {
+      delete aiDiffSnapshotsRef.current[activeFile.realPath];
+    }
+    handleCloseDiff();
+    toast.success('AI changes accepted', { duration: 1500 });
+  };
+
+  // AI Diff: Reject — restore original content, refresh editor, close diff
+  const handleRejectAiDiff = async () => {
+    const filePath = activeFile?.realPath;
+    if (!filePath) { handleCloseDiff(); return; }
+    const snapshot = aiDiffSnapshotsRef.current[filePath];
+    if (!snapshot) { handleCloseDiff(); return; }
+
+    try {
+      const api = window.electronAPI;
+      if (api?.restoreSnapshot) {
+        await api.restoreSnapshot(filePath, snapshot.originalContent, snapshot.isNewFile);
+      }
+      // Refresh file content in editor
+      if (snapshot.isNewFile) {
+        // Remove the tab if AI-created file was rejected
+        setOpenFiles(prev => prev.filter(f => f.realPath !== filePath && f.id !== filePath));
+        if (activeFile?.realPath === filePath || activeFile?.id === filePath) {
+          setActiveFile(null);
+        }
+      } else if (api?.readFile) {
+        const content = await api.readFile(filePath);
+        setFiles(prev => prev.map(f => (f.realPath === filePath || f.id === filePath) ? { ...f, content } : f));
+        if (activeFile?.realPath === filePath || activeFile?.id === filePath) {
+          setActiveFile(prev => ({ ...prev, content }));
+        }
+        setOpenFiles(prev => prev.map(f => (f.realPath === filePath || f.id === filePath) ? { ...f, content } : f));
+      }
+      delete aiDiffSnapshotsRef.current[filePath];
+      handleCloseDiff();
+      toast.success('AI changes rejected — original restored', { duration: 1500 });
+    } catch (err) {
+      console.error('[AI Diff Reject] Error:', err);
+      toast.error('Failed to restore original file');
+    }
+  };
+
+  // Listen for AI diff activation events from AIActivityPanel
+  useEffect(() => {
+    const handleActivateAiDiff = (event) => {
+      const { filePath, originalContent, fileName } = event?.detail || {};
+      if (!filePath) return;
+
+      // Open the file if not already active
+      const normalize = (p) => String(p || '').replace(/\\/g, '/').toLowerCase();
+      const targetNorm = normalize(filePath);
+      const allFiles = Array.isArray(files) ? files : [];
+      let target = allFiles.find(f => normalize(f.realPath || f.id) === targetNorm);
+
+      if (target) {
+        handleFileClick(target).then(() => {
+          setDiffOriginalContent(originalContent || '');
+          setDiffLabel(fileName || filePath.split(/[\\/]/).pop());
+          setIsAiDiff(true);
+          setDiffViewActive(true);
+        });
+      } else {
+        // File might not be in explorer tree yet — read it directly
+        setDiffOriginalContent(originalContent || '');
+        setDiffLabel(fileName || filePath.split(/[\\/]/).pop());
+        setIsAiDiff(true);
+        setDiffViewActive(true);
+      }
+    };
+
+    window.addEventListener('devstudio:ai-diff-activate', handleActivateAiDiff);
+    return () => window.removeEventListener('devstudio:ai-diff-activate', handleActivateAiDiff);
+  }, [files]);
 
 
 
@@ -1002,6 +1520,8 @@ export default function Layout() {
           onRenameFolder={handleRenameFolder}
           projectName={projectName}
           onOpenFolder={handleOpenFolder}
+          onRefreshExplorer={refreshDirectoryTree}
+          problems={problems}
           rootPath={localStorage.getItem('devstudio-last-project')}
           editorInstance={editorInstance} // Pass editor instance for Outline
           onCompareVersion={handleCompareVersion} // Pass diff handler for Timeline
@@ -1022,7 +1542,6 @@ export default function Layout() {
           onSettingChange={(k, v) => {
             const newSettings = { ...settings, [k]: v };
             setSettings(newSettings);
-            localStorage.setItem('devstudio-settings', JSON.stringify(newSettings));
             setSettingsUnsaved(true);
           }}
           onSave={(s) => {
@@ -1041,7 +1560,7 @@ export default function Layout() {
     }
   };
 
-  // ✅ Render StatusBar (with extension items)
+  // âœ… Render StatusBar (with extension items)
   const renderStatusBar = () => (
     <StatusBar
       extensionItems={statusBarItems}
@@ -1056,23 +1575,92 @@ export default function Layout() {
     />
   );
 
+  const effectiveThemeId = settings.themeSource === 'extension' && isThemeExtensionEnabled()
+    ? (localStorage.getItem('devstudio-extension-theme') || settings.ideTheme || DEFAULT_IDE_THEME_ID)
+    : (settings.ideTheme || DEFAULT_IDE_THEME_ID);
+
+  const runtimeSettings = {
+    ...settings,
+    ideTheme: effectiveThemeId
+  };
+
+  const handleCloseSettings = () => {
+    if (settingsUnsaved) {
+      persistSettingsChanges();
+      return;
+    }
+    setShowSettingsModal(false);
+  };
+
+  const discardSettingsChanges = () => {
+    const saved = localStorage.getItem('devstudio-settings');
+    setSettings(saved ? { ...DEFAULT_SETTINGS, ...JSON.parse(saved) } : DEFAULT_SETTINGS);
+    setSettingsUnsaved(false);
+    setShowUnsavedWarning(false);
+    setShowSettingsModal(false);
+  };
+
+  const persistSettingsChanges = () => {
+    localStorage.setItem('devstudio-settings', JSON.stringify(settings));
+    setSettingsUnsaved(false);
+    setShowUnsavedWarning(false);
+    setShowSettingsModal(false);
+  };
+
+  useEffect(() => {
+    const openSourceControl = () => {
+      setActiveView('git');
+      setSidebarOpen(true);
+    };
+
+    const openProblems = () => {
+      setTerminalOpen(true);
+      if (terminalMaximized) setTerminalMaximized(false);
+    };
+
+    const openAIGateway = () => {
+      setActiveView('ai-gateway');
+      setSidebarOpen(true);
+    };
+
+    const openWhatsNew = () => setShowWhatsNew(true);
+    const openSettings = () => setShowSettingsModal(true);
+
+    window.addEventListener('devstudio:status-branch', openSourceControl);
+    window.addEventListener('devstudio:status-problems', openProblems);
+    window.addEventListener('devstudio:status-network', openAIGateway);
+    window.addEventListener('devstudio:status-notifications', openWhatsNew);
+    window.addEventListener('devstudio:status-settings', openSettings);
+
+    return () => {
+      window.removeEventListener('devstudio:status-branch', openSourceControl);
+      window.removeEventListener('devstudio:status-problems', openProblems);
+      window.removeEventListener('devstudio:status-network', openAIGateway);
+      window.removeEventListener('devstudio:status-notifications', openWhatsNew);
+      window.removeEventListener('devstudio:status-settings', openSettings);
+    };
+  }, [terminalMaximized]);
+
   return (
-    <div className="h-screen flex flex-col bg-[#1e1e1e] text-[#cccccc] overflow-hidden" style={{ fontFamily: settings.fontFamily }}>
+    <div
+      className="h-screen flex flex-col bg-[#1e1e1e] text-[#cccccc] overflow-hidden"
+      style={{ fontFamily: 'var(--ui-font-family)', fontWeight: 'var(--ui-font-weight)' }}
+    >
       {/* Title Bar */}
-      <div className="h-8 ide-activitybar flex items-center justify-between px-3 text-xs ide-fg-secondary">
+      <div className="h-8 ide-activitybar flex-shrink-0 border-b border-[#2e2e2e] flex items-center justify-between px-3 text-xs ide-fg-secondary">
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2">
             <div className="w-3 h-3 rounded-full bg-[#ff5f56]" />
             <div className="w-3 h-3 rounded-full bg-[#ffbd2e]" />
             <div className="w-3 h-3 rounded-full bg-[#27ca40]" />
           </div>
-          <MenuBar onAction={handleMenuAction} settings={settings} onSettingToggle={(id) => setSettings(p => ({ ...p, [id]: !p[id] }))} />
+          <MenuBar onAction={handleMenuAction} settings={runtimeSettings} onSettingToggle={(id) => setSettings(p => ({ ...p, [id]: !p[id] }))} />
         </div>
-        <div className="flex-1 text-center">{activeFile?.name || 'DevStudio'} - DevStudio</div>
+        <div className="flex-1 text-center">{settings.commandCenter !== false ? `${activeFile?.name || 'DevStudio'} - DevStudio` : ''}</div>
 
       </div>
 
-      <div className="flex-1 flex overflow-hidden">
+      <div className={`flex-1 flex overflow-hidden ${settings.sidebarPosition === 'right' ? 'flex-row-reverse' : ''}`}>
         <ActivityBar
           activeView={activeView}
           setActiveView={setActiveView}
@@ -1086,15 +1674,15 @@ export default function Layout() {
         />
 
         {sidebarOpen && (
-          <div className="relative flex-shrink-0 border-r ide-border" style={{ width: `${sidebarWidth}px` }}>
+          <div className={`relative flex h-full min-h-0 flex-shrink-0 flex-col ide-border sidebar-panel-glass ${settings.sidebarPosition === 'right' ? 'border-l' : 'border-r'}`} style={{ width: `${sidebarWidth}px` }}>
             {renderSidebar()}
-            <div onMouseDown={startResizing} className="absolute top-0 right-[-4px] w-[8px] h-full cursor-col-resize z-50 hover:bg-[#007acc] opacity-0 hover:opacity-100 transition-opacity" />
+            <div onMouseDown={startResizing} className={`absolute top-0 w-[8px] h-full cursor-col-resize z-50 hover:bg-[#007acc] opacity-0 hover:opacity-100 transition-opacity ${settings.sidebarPosition === 'right' ? 'left-[-4px]' : 'right-[-4px]'}`} />
           </div>
         )}
 
         <div className="flex-1 flex flex-col overflow-hidden">
           <EditorTabs openFiles={openFiles} activeFile={activeFile} onTabClick={handleFileClick} onTabClose={handleTabClose} unsavedFiles={unsavedFiles} />
-          <Breadcrumbs file={activeFile} />
+          {settings.showBreadcrumbs !== false && <Breadcrumbs file={activeFile} />}
 
           <div className="flex-1 flex flex-col overflow-hidden relative">
 
@@ -1109,7 +1697,7 @@ export default function Layout() {
                     <h2 className="text-xl font-semibold">{selectedExtension.name || 'Extension'}</h2>
                     <p className="text-sm text-[#cfcfcf]">{selectedExtension.description}</p>
                   </div>
-                  <button onClick={() => setSelectedExtension(null)} className="absolute top-2 right-4 bg-[#3c3c3c] p-1 rounded text-white hover:bg-red-500">✕</button>
+                  <button onClick={() => setSelectedExtension(null)} className="absolute top-2 right-4 bg-[#3c3c3c] p-1 rounded text-white hover:bg-red-500">âœ•</button>
                 </div>
               ) : activeFile?.type === 'welcome' || showWelcome ? (
                 <WelcomeScreen
@@ -1125,33 +1713,42 @@ export default function Layout() {
               ) : activeFile ? (
                 activeFile.type === 'ai-artifact' ? (
                   <AIReportView file={activeFile} />
+                ) : activeFile.type === 'image-preview' ? (
+                  <ImagePreviewView file={activeFile} />
                 ) : (
-                <CodeEditor
-                  file={activeFile}
-                  files={files}
-                  onContentChange={handleContentChange}
-                  settings={settings}
-                  onValidate={(markers) => setProblems(markers)}
-                  focusLine={focusLine}
-                  focusSeverity={focusSeverity}
-                  onMount={(editor) => setEditorInstance(editor)} // Capture editor instance
-                  diffMode={diffViewActive}
-                  originalContent={diffOriginalContent}
-                  diffLabel={diffLabel}
-                  onCloseDiff={handleCloseDiff}
-                />
+                  <CodeEditor
+                    file={activeFile}
+                    files={files}
+                    onContentChange={handleContentChange}
+                    settings={runtimeSettings}
+                    onValidate={handleEditorValidate}
+                    focusLine={focusLine}
+                    focusSeverity={focusSeverity}
+                    onMount={(editor) => setEditorInstance(editor)}
+                    diffMode={diffViewActive}
+                    originalContent={diffOriginalContent}
+                    diffLabel={diffLabel}
+                    onCloseDiff={handleCloseDiff}
+                    isAiDiff={isAiDiff}
+                    onAcceptDiff={handleAcceptAiDiff}
+                    onRejectDiff={handleRejectAiDiff}
+                  />
                 )
               ) : (
-                <WelcomeScreen
-                  onOpenFolder={handleOpenFolder}
-                  onCreateFile={() => { setCreateType('file'); setShowCreateModal(true); }}
-                  recentProjects={recentProjects}
-                  onOpenRecent={handleOpenRecent}
-                  onOpenSettings={() => setShowSettingsModal(true)}
-                  onOpenCommandPalette={() => handleMenuAction('commandPalette')}
-                  onOpenDocs={() => window.open('https://code.visualstudio.com/docs', '_blank')}
-                  onOpenWhatsNew={() => setShowWhatsNew(true)}
-                />
+                settings.showWelcomeOnStartup !== false ? (
+                  <WelcomeScreen
+                    onOpenFolder={handleOpenFolder}
+                    onCreateFile={() => { setCreateType('file'); setShowCreateModal(true); }}
+                    recentProjects={recentProjects}
+                    onOpenRecent={handleOpenRecent}
+                    onOpenSettings={() => setShowSettingsModal(true)}
+                    onOpenCommandPalette={() => handleMenuAction('commandPalette')}
+                    onOpenDocs={() => window.open('https://code.visualstudio.com/docs', '_blank')}
+                    onOpenWhatsNew={() => setShowWhatsNew(true)}
+                  />
+                ) : (
+                  <div className="flex-1 bg-[var(--ide-bg)]" />
+                )
               )}
 
               {installedExtensions.includes('web-preview') && previewOpen && (
@@ -1176,19 +1773,42 @@ export default function Layout() {
                 outputLogs={outputLogs}
                 onNavigateProblem={handleNavigateProblem}
                 rootPath={localStorage.getItem('devstudio-last-project')}
-                settings={settings}
+                settings={runtimeSettings}
               />
             </div>
           </div>
         </div> {/* End of main editor column */}
 
-        {/* Right Side AI Panel */}
+      </div>
+
+      {/* Floating AI Assistant */}
+      <div className="ai-fab-wrap">
         {aiPanelOpen && (
-          <div className="w-96 border-l border-[#3c3c3c] flex-shrink-0">
-            <ChatPanel />
+          <div className="ai-fab-panel">
+            <div className="ai-fab-panel-header">
+              <span>AI Assistant</span>
+              <button
+                onClick={() => setAiPanelOpen(false)}
+                className="ai-fab-close"
+                title="Close AI Assistant"
+              >
+                ×
+              </button>
+            </div>
+            <div className="ai-fab-panel-body">
+              <AIActivityPanel />
+            </div>
           </div>
         )}
 
+        <button
+          type="button"
+          className={cn('ai-fab-button', aiPanelOpen && 'is-open')}
+          onClick={() => setAiPanelOpen((prev) => !prev)}
+          title={aiPanelOpen ? 'Close AI Assistant' : 'Open AI Assistant'}
+        >
+          <RobotCompanion className="ai-fab-robot" />
+        </button>
       </div>
 
       <DeleteModal isOpen={!!deleteTarget} onClose={() => setDeleteTarget(null)} onConfirm={confirmDelete} itemName={deleteTarget?.item?.name || ''} type={deleteTarget?.type || ''} />
@@ -1217,19 +1837,22 @@ export default function Layout() {
 
       {/* Settings Modal */}
       {showSettingsModal && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[100]">
-          <div className="settings-modal-container rounded-2xl w-11/12 h-5/6 max-w-6xl overflow-hidden shadow-2xl">
-            <div className="settings-modal-header flex items-center justify-between p-4 border-b">
-              <h2 className="text-lg font-semibold sp-text">Settings</h2>
-              <button onClick={() => setShowSettingsModal(false)} className="w-8 h-8 rounded-full settings-modal-close flex items-center justify-center sp-text-secondary text-xl transition-colors">×</button>
+        <div className="fixed inset-0 z-[100]">
+          <div className="settings-workspace-shell w-screen h-screen overflow-hidden">
+            <div className="settings-modal-header flex items-center justify-between px-6 py-4 border-b">
+              <div>
+                <p className="text-[11px] uppercase tracking-[0.22em] sp-text-muted font-semibold">Workspace</p>
+                <h2 className="text-lg font-semibold sp-text">Settings</h2>
+              </div>
+              <button onClick={handleCloseSettings} className="settings-close-text text-sm font-medium sp-text-secondary transition-colors">Close</button>
+              <button onClick={() => setShowSettingsModal(false)} className="w-8 h-8 rounded-full settings-modal-close flex items-center justify-center sp-text-secondary text-xl transition-colors">Ã—</button>
             </div>
-            <div className="h-[calc(100%-60px)] overflow-hidden">
+            <div className="h-[calc(100%-74px)] overflow-hidden">
               <SettingsPanel
                 settings={settings}
                 onSettingChange={(k, v) => {
                   const newSettings = { ...settings, [k]: v };
                   setSettings(newSettings);
-                  localStorage.setItem('devstudio-settings', JSON.stringify(newSettings));
                   setSettingsUnsaved(true);
                 }}
                 onSave={(s) => {
@@ -1252,8 +1875,8 @@ export default function Layout() {
             <p className="text-[#cccccc] mb-6">You have unsaved settings changes. Do you want to save them before closing?</p>
             <div className="flex gap-3 justify-end">
               <button onClick={() => setShowUnsavedWarning(false)} className="px-4 py-2 bg-[#3c3c3c] text-white rounded hover:bg-[#454545]">Cancel</button>
-              <button onClick={() => { setShowUnsavedWarning(false); setShowSettingsModal(false); }} className="px-4 py-2 bg-[#ff5f56] text-white rounded hover:bg-[#e54b42]">Don't Save</button>
-              <button onClick={() => { localStorage.setItem('devstudio-settings', JSON.stringify(settings)); setShowUnsavedWarning(false); setShowSettingsModal(false); setSettingsUnsaved(false); }} className="px-4 py-2 bg-[#007acc] text-white rounded hover:bg-[#005a9e]">Save</button>
+              <button onClick={discardSettingsChanges} className="px-4 py-2 bg-[#ff5f56] text-white rounded hover:bg-[#e54b42]">Don't Save</button>
+              <button onClick={persistSettingsChanges} className="px-4 py-2 bg-[#007acc] text-white rounded hover:bg-[#005a9e]">Save</button>
             </div>
           </div>
         </div>
@@ -1268,7 +1891,7 @@ export default function Layout() {
           >
             <div className="settings-modal-header flex items-center justify-between p-4 border-b">
               <h2 className="text-lg font-semibold sp-text">Recent Projects</h2>
-              <button onClick={() => setShowRecentModal(false)} className="w-8 h-8 rounded-full settings-modal-close flex items-center justify-center sp-text-secondary text-xl transition-colors">×</button>
+              <button onClick={() => setShowRecentModal(false)} className="w-8 h-8 rounded-full settings-modal-close flex items-center justify-center sp-text-secondary text-xl transition-colors">Ã—</button>
             </div>
             <div className="p-2 max-h-[50vh] overflow-y-auto">
               {recentProjects.length > 0 ? (
@@ -1311,23 +1934,23 @@ export default function Layout() {
       )}
 
       {/* Status Bar */}
-      {renderStatusBar()}
+      {settings.statusBarVisible !== false && renderStatusBar()}
 
       <Toaster
         position="bottom-right"
         toastOptions={{
-          className: 'glass-toast',
+          className: 'devstudio-toast',
           style: {
-            background: 'rgba(255, 255, 255, 0.1)',
-            backdropFilter: 'blur(20px)',
-            WebkitBackdropFilter: 'blur(20px)',
-            border: '1px solid rgba(255, 255, 255, 0.2)',
-            borderRadius: '12px',
-            color: '#ffffff',
-            boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255,255,255,0.1)',
+            background: 'var(--ide-sidebar)',
+            border: '1px solid var(--ide-border)',
+            borderRadius: '14px',
+            color: 'var(--ide-fg)',
+            boxShadow: '0 18px 50px rgba(0, 0, 0, 0.18)',
           },
         }}
       />
     </div>
   );
 }
+
+

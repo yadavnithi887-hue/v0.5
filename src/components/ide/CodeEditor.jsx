@@ -1,8 +1,9 @@
 import React, { useRef, useEffect, useState } from 'react';
 import Editor, { DiffEditor, loader } from '@monaco-editor/react';
 import * as monaco from 'monaco-editor';
-import { Sparkles, X } from 'lucide-react';
+import { Sparkles, X, Check, XCircle } from 'lucide-react';
 import FindReplace from './FindReplace';
+import { defineMonacoThemes, getMonacoThemeName } from '@/lib/ideThemes';
 
 // Configure loader to use the local Monaco instance
 loader.config({ monaco });
@@ -21,139 +22,114 @@ export default function CodeEditor({
   diffMode = false,
   originalContent = '',
   diffLabel = '',
-  onCloseDiff
+  onCloseDiff,
+  // AI diff props
+  isAiDiff = false,
+  onAcceptDiff,
+  onRejectDiff
 }) {
   const editorRef = useRef(null);
   const monacoRef = useRef(null);
   const decorationsRef = useRef([]);
   const [showFindReplace, setShowFindReplace] = useState(false);
 
-  // Language Detector
+  // Language Detector — comprehensive map, defaults to 'plaintext' (NOT 'javascript'!)
   const getLanguage = (filename) => {
-    if (!filename) return 'javascript';
-    const ext = filename.split('.').pop().toLowerCase();
+    if (!filename) return 'plaintext';
+    const lower = String(filename).toLowerCase();
+    // Handle dotfiles
+    if (lower === '.gitignore' || lower === '.dockerignore' || lower === '.npmignore' || lower === '.eslintignore') return 'plaintext';
+    if (lower === '.env' || lower.startsWith('.env.')) return 'ini';
+    if (lower === '.editorconfig') return 'ini';
+    if (lower === '.babelrc' || lower === '.prettierrc' || lower === '.eslintrc') return 'json';
+    if (lower === 'dockerfile') return 'dockerfile';
+    if (lower === 'makefile' || lower === 'gnumakefile') return 'plaintext';
+    if (lower === 'procfile' || lower === 'gemfile' || lower === 'rakefile') return 'ruby';
+    if (lower.endsWith('.d.ts')) return 'typescript';
+    const ext = lower.includes('.') ? lower.split('.').pop() : '';
+    if (!ext) return 'plaintext';
     const map = {
-      js: 'javascript', jsx: 'javascript', ts: 'typescript', tsx: 'typescript',
-      css: 'css', html: 'html', json: 'json', md: 'markdown', py: 'python',
-      java: 'java', cpp: 'cpp', c: 'c', sql: 'sql', go: 'go', rs: 'rust',
-      php: 'php', rb: 'ruby', swift: 'swift', kt: 'kotlin', scala: 'scala',
-      sh: 'shell', bash: 'shell', zsh: 'shell', yaml: 'yaml', yml: 'yaml',
-      xml: 'xml', svg: 'xml', vue: 'vue', scss: 'scss', sass: 'sass', less: 'less'
+      // JavaScript / TypeScript
+      js: 'javascript', jsx: 'javascript', mjs: 'javascript', cjs: 'javascript',
+      ts: 'typescript', tsx: 'typescript', mts: 'typescript', cts: 'typescript',
+      // Web
+      html: 'html', htm: 'html', xhtml: 'html',
+      css: 'css', scss: 'scss', sass: 'scss', less: 'less',
+      // Data
+      json: 'json', jsonc: 'json', json5: 'json', geojson: 'json',
+      yaml: 'yaml', yml: 'yaml',
+      xml: 'xml', svg: 'xml', xsl: 'xml', xsd: 'xml',
+      toml: 'ini', ini: 'ini', cfg: 'ini', conf: 'ini',
+      // Languages
+      py: 'python', pyw: 'python', pyx: 'python',
+      java: 'java', kt: 'kotlin', scala: 'scala', groovy: 'groovy',
+      cpp: 'cpp', cc: 'cpp', cxx: 'cpp', hpp: 'cpp', hxx: 'cpp', hh: 'cpp',
+      c: 'c', h: 'c',
+      cs: 'csharp',
+      go: 'go', rs: 'rust', dart: 'dart', r: 'r',
+      rb: 'ruby', erb: 'ruby',
+      php: 'php', phtml: 'php',
+      swift: 'swift', m: 'objective-c',
+      lua: 'lua', pl: 'perl', pm: 'perl',
+      sql: 'sql', psql: 'sql',
+      sh: 'shell', bash: 'shell', zsh: 'shell', fish: 'shell',
+      bat: 'bat', cmd: 'bat', ps1: 'powershell', psm1: 'powershell',
+      // Frameworks
+      vue: 'html', svelte: 'html', astro: 'html',
+      // Text/Docs
+      md: 'markdown', mdx: 'markdown', markdown: 'markdown',
+      txt: 'plaintext', text: 'plaintext', log: 'plaintext', out: 'plaintext',
+      csv: 'plaintext', tsv: 'plaintext',
+      // Config
+      lock: 'json', npmrc: 'ini', yarnrc: 'yaml', prettierrc: 'json',
+      eslintrc: 'json', babelrc: 'json',
+      env: 'ini', example: 'plaintext',
+      // Other
+      graphql: 'graphql', gql: 'graphql',
+      proto: 'protobuf',
+      tf: 'hcl', hcl: 'hcl',
+      dockerfile: 'dockerfile',
     };
-    return map[ext] || 'javascript';
+    return map[ext] || 'plaintext';
   };
 
-  // Theme Definition (Before Mount)
-  const handleBeforeMount = (monaco) => {
-    monaco.editor.defineTheme('devstudio-dark', {
-      base: 'vs-dark',
-      inherit: true,
-      rules: [
-        // Comments - Green Italic
-        { token: 'comment', foreground: '6A9955', fontStyle: 'italic' },
-        { token: 'comment.line', foreground: '6A9955', fontStyle: 'italic' },
-        { token: 'comment.block', foreground: '6A9955', fontStyle: 'italic' },
+  // Theme + Compiler Defaults (Before Mount)
+  const handleBeforeMount = (monacoInstance) => {
+    defineMonacoThemes(monacoInstance);
 
-        // Keywords - Purple/Pink
-        { token: 'keyword', foreground: 'C586C0' },
-        { token: 'keyword.control', foreground: 'C586C0' },
-        { token: 'keyword.operator', foreground: 'C586C0' },
-        { token: 'storage', foreground: '569CD6' },
-        { token: 'storage.type', foreground: '569CD6' },
-        { token: 'storage.modifier', foreground: '569CD6' },
+    // Configure TypeScript/JavaScript defaults to reduce false positives
+    const tsDefaults = monacoInstance.languages.typescript.typescriptDefaults;
+    const jsDefaults = monacoInstance.languages.typescript.javascriptDefaults;
 
-        // Strings - Orange
-        { token: 'string', foreground: 'CE9178' },
-        { token: 'string.quoted', foreground: 'CE9178' },
-        { token: 'string.template', foreground: 'CE9178' },
+    const sharedOptions = {
+      target: monacoInstance.languages.typescript.ScriptTarget.ESNext,
+      module: monacoInstance.languages.typescript.ModuleKind.ESNext,
+      moduleResolution: monacoInstance.languages.typescript.ModuleResolutionKind.NodeJs,
+      jsx: monacoInstance.languages.typescript.JsxEmit.ReactJSX,
+      allowJs: true,
+      allowNonTsExtensions: true,
+      allowSyntheticDefaultImports: true,
+      esModuleInterop: true,
+      strict: false,
+      noEmit: true,
+      skipLibCheck: true,
+      isolatedModules: true,
+      resolveJsonModule: true,
+    };
 
-        // Numbers - Light Green
-        { token: 'number', foreground: 'B5CEA8' },
-        { token: 'constant.numeric', foreground: 'B5CEA8' },
+    tsDefaults.setCompilerOptions(sharedOptions);
+    jsDefaults.setCompilerOptions(sharedOptions);
 
-        // Regex - Red
-        { token: 'regexp', foreground: 'D16969' },
-
-        // Types & Classes - Cyan
-        { token: 'type', foreground: '4EC9B0' },
-        { token: 'class', foreground: '4EC9B0' },
-        { token: 'type.identifier', foreground: '4EC9B0' },
-        { token: 'entity.name.type', foreground: '4EC9B0' },
-
-        // Functions - Yellow
-        { token: 'function', foreground: 'DCDCAA' },
-        { token: 'entity.name.function', foreground: 'DCDCAA' },
-        { token: 'support.function', foreground: 'DCDCAA' },
-
-        // Variables - Light Blue
-        { token: 'variable', foreground: '9CDCFE' },
-        { token: 'variable.parameter', foreground: '9CDCFE' },
-        { token: 'variable.other', foreground: '9CDCFE' },
-
-        // Operators - Light Gray
-        { token: 'operator', foreground: 'D4D4D4' },
-        { token: 'punctuation', foreground: 'D4D4D4' },
-
-        // HTML Specific
-        { token: 'tag', foreground: '569CD6' },
-        { token: 'tag.html', foreground: '569CD6' },
-        { token: 'metatag', foreground: '569CD6' },
-        { token: 'metatag.content.html', foreground: '9CDCFE' },
-        { token: 'metatag.html', foreground: '569CD6' },
-        { token: 'attribute.name', foreground: '9CDCFE' },
-        { token: 'attribute.name.html', foreground: '9CDCFE' },
-        { token: 'attribute.value', foreground: 'CE9178' },
-        { token: 'attribute.value.html', foreground: 'CE9178' },
-        { token: 'delimiter.html', foreground: '808080' },
-
-        // CSS Specific
-        { token: 'selector', foreground: 'D7BA7D' },
-        { token: 'attribute.name.css', foreground: '9CDCFE' },
-        { token: 'attribute.value.css', foreground: 'CE9178' },
-        { token: 'attribute.value.number.css', foreground: 'B5CEA8' },
-        { token: 'attribute.value.unit.css', foreground: 'B5CEA8' },
-
-        // JSON
-        { token: 'string.key.json', foreground: '9CDCFE' },
-        { token: 'string.value.json', foreground: 'CE9178' },
-
-        // Markdown
-        { token: 'markup.heading', foreground: '569CD6', fontStyle: 'bold' },
-        { token: 'markup.bold', fontStyle: 'bold' },
-        { token: 'markup.italic', fontStyle: 'italic' },
-
-        // Misc
-        { token: 'delimiter', foreground: '808080' },
-        { token: 'delimiter.bracket', foreground: 'FFD700' },
-        { token: 'delimiter.parenthesis', foreground: 'DA70D6' },
-        { token: 'delimiter.square', foreground: '569CD6' },
-
-        // Constants
-        { token: 'constant', foreground: '4FC1FF' },
-        { token: 'constant.language', foreground: '569CD6' },
-      ],
-      colors: {
-        'editor.background': '#1e1e1e',
-        'editor.foreground': '#d4d4d4',
-        'editorLineNumber.foreground': '#5a5a5a',
-        'editorLineNumber.activeForeground': '#c6c6c6',
-        'editorGutter.background': '#1e1e1e',
-        'editorGutter.modifiedBackground': '#0c7d9d',
-        'editorGutter.addedBackground': '#587c0c',
-        'editorGutter.deletedBackground': '#94151b',
-        'editor.lineHighlightBackground': '#2a2d2e',
-        'editor.lineHighlightBorder': '#282828',
-        'editorCursor.foreground': '#aeafad',
-        'editorCursor.background': '#000000',
-        'editorWhitespace.foreground': '#3e3e42',
-        'editorIndentGuide.background': '#404040',
-        'editorIndentGuide.activeBackground': '#707070',
-        'editor.selectionBackground': '#264f78',
-        'editor.inactiveSelectionBackground': '#3a3d41',
-        'editor.selectionHighlightBackground': '#add6ff26',
-        'editorBracketMatch.background': '#0064001a',
-        'editorBracketMatch.border': '#888888',
-      }
+    // Disable eager validation to reduce noise
+    tsDefaults.setDiagnosticsOptions({
+      noSemanticValidation: false,
+      noSyntaxValidation: false,
+      noSuggestionDiagnostics: true,      // hide 'suggestions' like unused vars
+    });
+    jsDefaults.setDiagnosticsOptions({
+      noSemanticValidation: false,
+      noSyntaxValidation: false,
+      noSuggestionDiagnostics: true,
     });
   };
 
@@ -178,22 +154,33 @@ export default function CodeEditor({
     });
 
     // Force theme application
-    monaco.editor.setTheme('devstudio-dark');
+    monaco.editor.setTheme(getMonacoThemeName(settings.ideTheme));
 
-    // Validation Listener
+    // Validation Listener — only reports diagnostics for languages that support them
+    const DIAGNOSTIC_LANGUAGES = new Set([
+      'javascript', 'typescript', 'json', 'css', 'scss', 'less', 'html'
+    ]);
     monaco.editor.onDidChangeMarkers(() => {
       const model = editor.getModel();
-      if (model) {
-        const markers = monaco.editor.getModelMarkers({ resource: model.uri });
-        const formattedProblems = markers.map(m => ({
-          file: file.name,
-          message: m.message,
-          line: m.startLineNumber,
-          severity: m.severity === 8 ? 'Error' : 'Warning',
-          source: m.source || 'TS/JS'
-        }));
-        if (onValidate) onValidate(formattedProblems);
+      if (!model) return;
+      const lang = model.getLanguageId();
+      // Skip diagnostics for non-diagnostic languages (plaintext, markdown, etc.)
+      if (!DIAGNOSTIC_LANGUAGES.has(lang)) {
+        if (onValidate) onValidate([]);
+        return;
       }
+      const markers = monaco.editor.getModelMarkers({ resource: model.uri });
+      const formattedProblems = markers.map(m => ({
+        file: file.name,
+        filePath: file.realPath || file.path || file.id || file.name,
+        message: m.message,
+        line: m.startLineNumber,
+        column: m.startColumn,
+        severity: m.severity === 8 ? 'Error' : 'Warning',
+        source: m.source || (lang === 'json' ? 'JSON' : lang === 'css' || lang === 'scss' || lang === 'less' ? 'CSS' : lang === 'html' ? 'HTML' : 'TS/JS'),
+        code: typeof m.code === 'string' ? m.code : m.code?.value
+      }));
+      if (onValidate) onValidate(formattedProblems);
     });
   };
 
@@ -201,12 +188,15 @@ export default function CodeEditor({
   useEffect(() => {
     if (editorRef.current && monacoRef.current) {
       const editor = editorRef.current;
+      monacoRef.current.editor.setTheme(getMonacoThemeName(settings.ideTheme));
 
       editor.updateOptions({
         // Font Settings
         fontSize: settings.fontSize || 14,
-        fontFamily: settings.fontFamily || "'Fira Code', Consolas, monospace",
-        fontLigatures: true,
+        fontFamily: settings.fontFamily || "'JetBrains Mono', 'Fira Code', Consolas, monospace",
+        fontLigatures: settings.fontLigatures !== false,
+        lineHeight: settings.lineHeight || Math.round((settings.fontSize || 14) * 1.6),
+        letterSpacing: settings.letterSpacing || 0,
 
         // Tab Settings
         tabSize: settings.tabSize || 2,
@@ -228,6 +218,7 @@ export default function CodeEditor({
 
         // Scrolling
         smoothScrolling: settings.smoothScrolling !== false,
+        mouseWheelZoom: settings.mouseWheelZoom !== false,
         scrollbar: {
           verticalScrollbarSize: settings.scrollbar === 'hidden' ? 0 : 10,
           horizontalScrollbarSize: settings.scrollbar === 'hidden' ? 0 : 10,
@@ -256,10 +247,16 @@ export default function CodeEditor({
           indentation: settings.guidesIndentation !== false,
           bracketPairs: settings.bracketPairColorization !== false,
         },
+        matchBrackets: settings.matchBrackets || 'always',
 
         // Auto Closing
         autoClosingBrackets: settings.autoClosingBrackets || 'languageDefined',
         autoClosingQuotes: settings.autoClosingQuotes || 'languageDefined',
+        stickyScroll: { enabled: settings.stickyScroll === true },
+        occurrencesHighlight: settings.occurrencesHighlight !== false ? 'singleFile' : 'off',
+        links: settings.links !== false,
+        inlineSuggest: { enabled: settings.inlineSuggest !== false },
+        quickSuggestions: settings.quickSuggestions !== false,
       });
     }
   }, [settings]);
@@ -304,14 +301,14 @@ export default function CodeEditor({
     }
   }, [focusLine, focusSeverity, file?.id]);
 
-  if (!file) return <div className="flex-1 bg-[#1e1e1e]" />;
+  if (!file) return <div className="flex-1 bg-[var(--ide-bg)]" />;
 
   return (
-    <div className="flex-1 h-full flex flex-col bg-[#1e1e1e] relative">
+    <div className="flex-1 h-full flex flex-col bg-[var(--ide-bg)] relative">
 
       {/* Extension Buttons Toolbar */}
       {extensionButtons && extensionButtons.length > 0 && (
-        <div className="bg-[#2d2d2d] border-b border-[#3c3c3c] px-3 py-1 flex items-center gap-2">
+        <div className="bg-[var(--ide-sidebar)] border-b border-[var(--ide-border)] px-3 py-1 flex items-center gap-2">
           {extensionButtons.map((btn) => (
             <button
               key={btn.id}
@@ -322,7 +319,7 @@ export default function CodeEditor({
                   try { btn.onClick(); } catch (e) { console.error(e); }
                 }
               }}
-              className="flex items-center gap-1 px-2 py-1 text-xs text-[#cccccc] hover:bg-[#3c3c3c] rounded transition-colors"
+              className="flex items-center gap-1 px-2 py-1 text-xs text-[var(--ide-fg-secondary)] hover:bg-[var(--ide-activitybar)] rounded transition-colors"
               title={btn.tooltip || btn.label}
             >
               {btn.icon ? (
@@ -337,19 +334,46 @@ export default function CodeEditor({
       )}
 
       {/* Diff Mode Header */}
-      {diffMode && onCloseDiff && (
-        <div className="bg-[#2d2d2d] border-b border-[#3c3c3c] px-3 py-2 flex items-center justify-between">
-          <div className="text-xs text-[#cccccc]">
-            <span className="font-semibold">Comparing:</span> {diffLabel || 'Previous Version'} ↔ Current
+      {diffMode && (onCloseDiff || isAiDiff) && (
+        <div className="border-b border-[var(--ide-border)] px-3 py-2 flex items-center justify-between" style={{ background: isAiDiff ? '#1a2233' : 'var(--ide-sidebar)' }}>
+          <div className="text-xs text-[var(--ide-fg-secondary)]" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {isAiDiff && <Sparkles size={13} style={{ color: '#a78bfa' }} />}
+            <span className="font-semibold">{isAiDiff ? 'AI Edit Review:' : 'Comparing:'}</span>
+            <span>{diffLabel || 'Original'} ↔ Modified</span>
           </div>
-          <button
-            onClick={onCloseDiff}
-            className="flex items-center gap-1 px-2 py-1 text-xs text-[#cccccc] hover:bg-[#3c3c3c] rounded transition-colors"
-            title="Close Diff View"
-          >
-            <X size={14} />
-            Close Diff
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            {isAiDiff && onAcceptDiff && (
+              <button
+                onClick={onAcceptDiff}
+                style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 12px', borderRadius: 5, border: 'none', background: '#22c55e', color: '#fff', fontSize: 11.5, fontWeight: 600, cursor: 'pointer', transition: 'background 0.15s' }}
+                onMouseEnter={e => e.currentTarget.style.background = '#16a34a'}
+                onMouseLeave={e => e.currentTarget.style.background = '#22c55e'}
+                title="Accept AI changes"
+              >
+                <Check size={13} /> Accept
+              </button>
+            )}
+            {isAiDiff && onRejectDiff && (
+              <button
+                onClick={onRejectDiff}
+                style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 12px', borderRadius: 5, border: 'none', background: '#ef4444', color: '#fff', fontSize: 11.5, fontWeight: 600, cursor: 'pointer', transition: 'background 0.15s' }}
+                onMouseEnter={e => e.currentTarget.style.background = '#dc2626'}
+                onMouseLeave={e => e.currentTarget.style.background = '#ef4444'}
+                title="Reject AI changes and restore original"
+              >
+                <XCircle size={13} /> Reject
+              </button>
+            )}
+            {!isAiDiff && onCloseDiff && (
+              <button
+                onClick={onCloseDiff}
+                className="flex items-center gap-1 px-2 py-1 text-xs text-[var(--ide-fg-secondary)] hover:bg-[var(--ide-activitybar)] rounded transition-colors"
+                title="Close Diff View"
+              >
+                <X size={14} /> Close Diff
+              </button>
+            )}
+          </div>
         </div>
       )}
 
@@ -369,12 +393,16 @@ export default function CodeEditor({
           language={getLanguage(file.name)}
           original={originalContent}
           modified={file.content}
-          theme="devstudio-dark"
+          theme={getMonacoThemeName(settings.ideTheme)}
+          beforeMount={handleBeforeMount}
           options={{
-            readOnly: false,
-            renderSideBySide: true,
+            readOnly: true,
+            renderSideBySide: !isAiDiff,
             fontSize: settings.fontSize || 14,
-            fontFamily: settings.fontFamily || "'Fira Code', Consolas, monospace",
+            fontFamily: settings.fontFamily || "'JetBrains Mono', 'Fira Code', Consolas, monospace",
+            lineHeight: settings.lineHeight || Math.round((settings.fontSize || 14) * 1.6),
+            fontLigatures: settings.fontLigatures !== false,
+            letterSpacing: settings.letterSpacing || 0,
             minimap: { enabled: settings.minimap !== false },
             automaticLayout: true,
             scrollBeyondLastLine: false,
@@ -391,7 +419,7 @@ export default function CodeEditor({
           width="100%"
           language={getLanguage(file.name)}
           value={file.content}
-          theme="devstudio-dark"
+          theme={getMonacoThemeName(settings.ideTheme)}
           path={file.path}
           beforeMount={handleBeforeMount}
           onMount={handleEditorDidMount}
@@ -399,8 +427,10 @@ export default function CodeEditor({
           options={{
             // Font
             fontSize: settings.fontSize || 14,
-            fontFamily: settings.fontFamily || "'Fira Code', Consolas, monospace",
-            fontLigatures: true,
+            fontFamily: settings.fontFamily || "'JetBrains Mono', 'Fira Code', Consolas, monospace",
+            fontLigatures: settings.fontLigatures !== false,
+            lineHeight: settings.lineHeight || Math.round((settings.fontSize || 14) * 1.6),
+            letterSpacing: settings.letterSpacing || 0,
 
             // Tab
             tabSize: settings.tabSize || 2,
@@ -422,6 +452,7 @@ export default function CodeEditor({
 
             // Scrolling
             smoothScrolling: settings.smoothScrolling !== false,
+            mouseWheelZoom: settings.mouseWheelZoom !== false,
             scrollBeyondLastLine: false,
 
             // Minimap
@@ -445,10 +476,14 @@ export default function CodeEditor({
               indentation: settings.guidesIndentation !== false,
               bracketPairs: settings.bracketPairColorization !== false,
             },
+            matchBrackets: settings.matchBrackets || 'always',
 
             // Auto Closing
             autoClosingBrackets: settings.autoClosingBrackets || 'languageDefined',
             autoClosingQuotes: settings.autoClosingQuotes || 'languageDefined',
+            stickyScroll: { enabled: settings.stickyScroll === true },
+            occurrencesHighlight: settings.occurrencesHighlight !== false ? 'singleFile' : 'off',
+            links: settings.links !== false,
 
             // Layout
             automaticLayout: true,
@@ -458,9 +493,9 @@ export default function CodeEditor({
 
             // IntelliSense / Autocomplete
             quickSuggestions: {
-              other: true,
+              other: settings.quickSuggestions !== false,
               comments: false,
-              strings: true,
+              strings: settings.quickSuggestions !== false,
             },
             suggestOnTriggerCharacters: true,
             acceptSuggestionOnEnter: 'on',

@@ -1,6 +1,12 @@
 // backend/auth/GoogleOAuth.js
 // Google OAuth 2.0 PKCE flow for Gemini API access
 // No external SDK - raw HTTP with fetch
+// ============================================================================
+// HARD TAG: ANTIGRAVITY OAUTH LOCKED
+// This file contains a known-working Google Antigravity OAuth flow.
+// Do NOT change scopes, endpoints, PKCE/state validation, redirect pattern,
+// or token exchange payload unless explicitly requested by project owner.
+// ============================================================================
 
 import http from 'http';
 import crypto from 'crypto';
@@ -16,16 +22,17 @@ class GoogleOAuth {
 
         this.AUTH_ENDPOINT = 'https://accounts.google.com/o/oauth2/v2/auth';
         this.TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
-        this.USERINFO_ENDPOINT = 'https://www.googleapis.com/oauth2/v2/userinfo';
+        // Use v1 with alt=json (same as OpenClaw)
+        this.USERINFO_ENDPOINT = 'https://www.googleapis.com/oauth2/v1/userinfo?alt=json';
 
-        // Scopes for Antigravity (Strictly these, or 403 error occurs)
+        // HARD TAG: ANTIGRAVITY SCOPES LOCKED
+        // Scopes for Antigravity (EXACT match with OpenClaw - no extra scopes!)
         this.SCOPES = [
             'https://www.googleapis.com/auth/cloud-platform',
             'https://www.googleapis.com/auth/userinfo.email',
             'https://www.googleapis.com/auth/userinfo.profile',
             'https://www.googleapis.com/auth/cclog',
-            'https://www.googleapis.com/auth/experimentsandconfigs',
-            'openid'
+            'https://www.googleapis.com/auth/experimentsandconfigs'
         ];
     }
 
@@ -38,35 +45,58 @@ class GoogleOAuth {
         return { codeVerifier: verifier, codeChallenge };
     }
 
+    parseRedirectUrl(input) {
+        const value = String(input || '').trim();
+        if (!value) return {};
+        try {
+            const url = new URL(value);
+            return {
+                code: url.searchParams.get('code') ?? undefined,
+                state: url.searchParams.get('state') ?? undefined,
+                error: url.searchParams.get('error') ?? undefined,
+            };
+        } catch {
+            return {};
+        }
+    }
+
+    /**
+     * Read credentials from environment Ã¢â€ â€™ saved config Ã¢â€ â€™ fallback defaults
+     * Secrets are NEVER hardcoded in source code!
+     */
     _resolveOAuthConfig(clientId, clientSecret) {
+        const ENV_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
+        const ENV_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || '';
+        
         const appConfig = this.tokenManager.getAppConfig?.() || {};
-        const resolvedClientId = (clientId || appConfig.clientId || process.env.GOOGLE_OAUTH_CLIENT_ID || '').trim();
-        const resolvedClientSecret = (clientSecret || appConfig.clientSecret || process.env.GOOGLE_OAUTH_CLIENT_SECRET || '').trim();
+        
+        // Priority: passed args > saved config > env vars
+        const resolvedClientId = (clientId || appConfig.clientId || ENV_CLIENT_ID).trim();
+        const resolvedClientSecret = (clientSecret || appConfig.clientSecret || ENV_CLIENT_SECRET).trim();
 
         if (!resolvedClientId) {
-            throw new Error(
-                'Google OAuth Client ID missing. Set it in DevStudio Settings > Auth Config or env GOOGLE_OAUTH_CLIENT_ID.'
-            );
+            throw new Error('Google Client ID not configured. Set GOOGLE_CLIENT_ID in backend/.env');
         }
 
         return { clientId: resolvedClientId, clientSecret: resolvedClientSecret };
     }
 
     buildAuthURL(port, codeChallenge, verifier, clientId) {
+        // HARD TAG: DO NOT ALTER redirect_uri/state/code_challenge contract.
+        // Use EXACT scopes from OpenClaw - no extra!
+        const scopes = [
+            'https://www.googleapis.com/auth/cloud-platform',
+            'https://www.googleapis.com/auth/userinfo.email',
+            'https://www.googleapis.com/auth/userinfo.profile',
+            'https://www.googleapis.com/auth/cclog',
+            'https://www.googleapis.com/auth/experimentsandconfigs'
+        ];
+        
         const params = new URLSearchParams({
             client_id: clientId,
             response_type: 'code',
             redirect_uri: `http://localhost:${port}/oauth-callback`,
-            scope: [
-                'https://www.googleapis.com/auth/cloud-platform',
-                'https://www.googleapis.com/auth/userinfo.email',
-                'https://www.googleapis.com/auth/userinfo.profile',
-                'https://www.googleapis.com/auth/cclog',
-                'https://www.googleapis.com/auth/experimentsandconfigs',
-                'openid',
-                'email',
-                'profile'
-            ].join(' '),
+            scope: scopes.join(' '),
             code_challenge: codeChallenge,
             code_challenge_method: 'S256',
             state: verifier,
@@ -77,17 +107,27 @@ class GoogleOAuth {
     }
 
     async exchangeCode(code, codeVerifier, port, clientId, clientSecret) {
+        // HARD TAG: ANTIGRAVITY TOKEN EXCHANGE LOCKED
+        // Keep grant_type/client_secret/code_verifier/redirect_uri contract unchanged.
+        // Read from env if not provided
+        const ENV_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
+        const ENV_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || '';
+        
+        const resolvedClientId = clientId || ENV_CLIENT_ID;
+        const resolvedClientSecret = clientSecret || ENV_CLIENT_SECRET;
+        
+        if (!resolvedClientId || !resolvedClientSecret) {
+            throw new Error('OAuth credentials missing. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in backend/.env');
+        }
+
         const params = new URLSearchParams({
-            client_id: clientId,
+            client_id: resolvedClientId,
+            client_secret: resolvedClientSecret,  // ALWAYS send - Antigravity requires it!
             code,
             grant_type: 'authorization_code',
             redirect_uri: `http://localhost:${port}/oauth-callback`,
             code_verifier: codeVerifier
         });
-
-        if (clientSecret) {
-            params.set('client_secret', clientSecret);
-        }
 
         const response = await fetch(this.TOKEN_ENDPOINT, {
             method: 'POST',
@@ -108,7 +148,15 @@ class GoogleOAuth {
             } catch (e) {}
             throw new Error(errorMsg);
         }
-        return await response.json();
+        
+        const tokenData = await response.json();
+        
+        // CRITICAL: Antigravity MUST return refresh_token
+        if (!tokenData.refresh_token) {
+            throw new Error('No refresh token received. Please try again with prompt=consent.');
+        }
+        
+        return tokenData;
     }
 
     async getUserInfo(accessToken) {
@@ -123,8 +171,7 @@ class GoogleOAuth {
         if (this.callbackServer) this.stopCallbackServer();
         const { codeVerifier, codeChallenge } = this.generatePKCE();
 
-        // PORT 51121 IS MANDATORY FOR ANTIGRAVITY CLIENT ID
-        const port = 51121;
+        const requestedPort = Number(process.env.OAUTH_CALLBACK_PORT || 51121);
 
         const resolvedOAuth = this._resolveOAuthConfig(clientId, clientSecret);
 
@@ -138,10 +185,28 @@ class GoogleOAuth {
             codeVerifier,
             clientId: resolvedOAuth.clientId,
             clientSecret: resolvedOAuth.clientSecret,
-            port
+            port: requestedPort,
+            startedAt: Date.now(),
+            completed: false,
+            completionPromise: null,
         };
 
-        await this._startCallbackServer(port, resolvedOAuth.clientId);
+        let callbackServerStarted = false;
+        let port = requestedPort;
+        try {
+            await this._startCallbackServer(port, resolvedOAuth.clientId);
+            callbackServerStarted = true;
+        } catch (err) {
+            // If local callback port is blocked, keep flow alive using manual paste mode.
+            if (err.code === 'EACCES' || err.code === 'EADDRINUSE') {
+                callbackServerStarted = false;
+                console.warn(`[AUTH] Callback server unavailable on localhost:${port} (${err.code}). Falling back to manual URL paste.`);
+            } else {
+                throw err;
+            }
+        }
+
+        this.pendingAuth.port = port;
         const authURL = this.buildAuthURL(port, codeChallenge, codeVerifier, resolvedOAuth.clientId);
 
         // Open the URL automatically in the default browser
@@ -153,8 +218,8 @@ class GoogleOAuth {
             if (err) console.error('[AUTH] Failed to open browser automatically:', err.message);
         });
 
-        if (this.io) this.io.emit('auth:flow-started', { port, authURL });
-        return { authURL, port };
+        if (this.io) this.io.emit('auth:flow-started', { port, authURL, callbackServerStarted });
+        return { authURL, port, callbackServerStarted };
     }
 
     _startCallbackServer(port, clientId) {
@@ -168,36 +233,116 @@ class GoogleOAuth {
                     res.end('Not found');
                 }
             });
-            this.callbackServer.listen(port, () => resolve());
+            this.callbackServer.once('error', (err) => {
+                this.callbackServer = null;
+                reject(err);
+            });
+            this.callbackServer.listen(port, '127.0.0.1', () => resolve());
         });
     }
 
-    async _handleCallback(url, res, port, clientId) {
-        const code = url.searchParams.get('code');
-        if (!code || !this.pendingAuth) {
+    async _handleCallback(url, res) {
+        const parsed = this.parseRedirectUrl(url.toString());
+        try {
+            const result = await this._completeAuthWithParsed(parsed, 'callback');
+            res.writeHead(200, { 'Content-Type': 'text/html' });
+            res.end(this._getSuccessPage(result.name || 'User', result.email || 'Authenticated'));
+        } catch (err) {
             res.writeHead(400, { 'Content-Type': 'text/html' });
-            res.end(this._getErrorPage('Invalid callback. Missing authorization code.'));
-            return;
+            res.end(this._getErrorPage(err.message));
+        }
+    }
+
+    /**
+     * Handle manually pasted redirect URL (for mobile/no-browser flows)
+     */
+    async handleManualUrl(urlStr) {
+        const parsed = this.parseRedirectUrl(urlStr);
+        const result = await this._completeAuthWithParsed(parsed, 'manual');
+        return { success: true, email: result.email, name: result.name, projectId: result.projectId };
+    }
+
+    async _completeAuthWithParsed(parsed, source) {
+        // HARD TAG: PKCE + STATE VALIDATION MUST STAY IN PLACE.
+        if (!this.pendingAuth) {
+            throw new Error('No pending auth flow. Please start OAuth first.');
         }
 
-        try {
+        if (this.pendingAuth.completed && this.pendingAuth.completionPromise) {
+            return await this.pendingAuth.completionPromise;
+        }
+
+        const { code, state, error } = parsed || {};
+        if (error) {
+            throw new Error(`Google OAuth Error: ${error}`);
+        }
+        if (!code) {
+            throw new Error('No authorization code found in redirect URL.');
+        }
+        if (state && state !== this.pendingAuth.codeVerifier) {
+            throw new Error('OAuth state mismatch - possible CSRF attack.');
+        }
+
+        this.pendingAuth.completed = true;
+        this.pendingAuth.completedBy = source;
+
+        this.pendingAuth.completionPromise = (async () => {
             const tokens = await this.exchangeCode(
                 code,
                 this.pendingAuth.codeVerifier,
-                port,
-                clientId,
+                this.pendingAuth.port,
+                this.pendingAuth.clientId,
                 this.pendingAuth.clientSecret
             );
             const userInfo = await this.getUserInfo(tokens.access_token);
+            const projectId = await this._discoverProjectId(tokens.access_token);
 
-            // PROJECT DISCOVERY
-            console.log('[AUTH] Discovering Project ID...');
-            let projectId = 'rising-fact-p41fc';
+            await this.tokenManager.saveTokens({
+                provider: 'google-antigravity',
+                accessToken: tokens.access_token,
+                refreshToken: tokens.refresh_token,
+                expiresAt: Date.now() + (tokens.expires_in * 1000),
+                clientId: this.pendingAuth.clientId,
+                clientSecret: this.pendingAuth.clientSecret,
+                projectId,
+                userEmail: userInfo.email,
+                userName: userInfo.name
+            });
+
+            this.pendingAuth.userEmail = userInfo.email;
+            this.pendingAuth.userName = userInfo.name;
+            this.pendingAuth.projectId = projectId;
+
+            this.stopCallbackServer();
+            if (this.io) this.io.emit('auth:success', { email: userInfo.email, source });
+            return { email: userInfo.email, name: userInfo.name, projectId, source };
+        })();
+
+        try {
+            return await this.pendingAuth.completionPromise;
+        } catch (err) {
+            // Allow retry from the other path if exchange fails
+            this.pendingAuth.completed = false;
+            this.pendingAuth.completedBy = null;
+            this.pendingAuth.completionPromise = null;
+            throw err;
+        }
+    }
+
+    async _discoverProjectId(accessToken) {
+        console.log('[AUTH] Discovering Project ID...');
+        let projectId = 'rising-fact-p41fc';
+        const projectEndpoints = [
+            'https://cloudcode-pa.googleapis.com',
+            'https://daily-cloudcode-pa.sandbox.googleapis.com'
+        ];
+
+        for (const endpoint of projectEndpoints) {
             try {
-                const discRes = await fetch('https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist', {
+                const discRes = await fetch(`${endpoint}/v1internal:loadCodeAssist`, {
                     method: 'POST',
                     headers: {
-                        'Authorization': `Bearer ${tokens.access_token}`,
+                        'Authorization': `Bearer ${accessToken}`,
                         'Content-Type': 'application/json',
                         'User-Agent': 'google-api-nodejs-client/9.15.1',
                         'X-Goog-Api-Client': 'google-cloud-sdk vscode_cloudshelleditor/0.1',
@@ -211,39 +356,22 @@ class GoogleOAuth {
                         metadata: { ideType: 'IDE_UNSPECIFIED', platform: 'PLATFORM_UNSPECIFIED', pluginType: 'GEMINI' }
                     })
                 });
-                if (discRes.ok) {
-                    const data = await discRes.json();
-                    if (data.cloudaicompanionProject) {
-                        projectId = typeof data.cloudaicompanionProject === 'string'
-                            ? data.cloudaicompanionProject
-                            : (data.cloudaicompanionProject.id || projectId);
-                    }
+                if (!discRes.ok) continue;
+
+                const data = await discRes.json();
+                if (data.cloudaicompanionProject) {
+                    projectId = typeof data.cloudaicompanionProject === 'string'
+                        ? data.cloudaicompanionProject
+                        : (data.cloudaicompanionProject.id || projectId);
+                    console.log(`[AUTH] Project discovered: ${projectId}`);
+                    break;
                 }
             } catch (e) {
-                console.warn('Project discovery failed', e);
+                console.warn(`Project discovery failed on ${endpoint}`, e.message);
             }
-
-            await this.tokenManager.saveTokens({
-                provider: 'google-antigravity',
-                accessToken: tokens.access_token,
-                refreshToken: tokens.refresh_token,
-                expiresAt: Date.now() + (tokens.expires_in * 1000),
-                clientId,
-                clientSecret: this.pendingAuth.clientSecret,
-                projectId,
-                userEmail: userInfo.email,
-                userName: userInfo.name
-            });
-
-            res.writeHead(200, { 'Content-Type': 'text/html' });
-            res.end(this._getSuccessPage(userInfo.name, userInfo.email));
-            if (this.io) this.io.emit('auth:success', { email: userInfo.email });
-        } catch (err) {
-            res.writeHead(500, { 'Content-Type': 'text/html' });
-            res.end(this._getErrorPage(err.message));
-        } finally {
-            this.stopCallbackServer();
         }
+
+        return projectId;
     }
 
     /**

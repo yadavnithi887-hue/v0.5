@@ -6,6 +6,7 @@ import WebTools from './WebTools.js';
 import MemoryTools from './MemoryTools.js';
 import ArtifactTools from './ArtifactTools.js';
 import TaskBoundaryTools from './TaskBoundaryTools.js';
+import DiagnosticsTools from './DiagnosticsTools.js';
 
 class ToolRouter {
     constructor(io) {
@@ -16,6 +17,7 @@ class ToolRouter {
         this.memoryTools = new MemoryTools(io);
         this.artifactTools = new ArtifactTools(io);
         this.taskBoundaryTools = new TaskBoundaryTools(io);
+        this.diagnosticsTools = new DiagnosticsTools(io);
 
         // Setup socket listeners for user input on AI terminal
         this.cmdTools.setupSocketListeners();
@@ -128,6 +130,10 @@ class ToolRouter {
                 return await this.artifactTools.writeArtifact(parameters);
             case 'task_boundary':
                 return await this.taskBoundaryTools.taskBoundary(parameters);
+
+            // ==================== Diagnostics Tools ====================
+            case 'check_problems':
+                return await this.diagnosticsTools.checkProblems(parameters);
 
             default:
                 throw new Error(`Unknown tool: ${toolName}`);

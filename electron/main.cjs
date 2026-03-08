@@ -118,6 +118,62 @@ ipcMain.handle('terminal:write', (event, { id, data }) => { if (terminals[id]) t
 ipcMain.handle('terminal:resize', (event, { id, cols, rows }) => { if (terminals[id]) try { terminals[id].resize(cols, rows); } catch (e) { } });
 ipcMain.handle('terminal:kill', (event, id) => { if (terminals[id]) { terminals[id].kill(); delete terminals[id]; } });
 
+// --- AI Terminal PTY Handlers (Proxy for Backend) ---
+ipcMain.handle('terminal:aiExecutePty', (event, { commandId, command, cwd }) => {
+  const targetPath = cwd && fs.existsSync(cwd) ? cwd : os.homedir();
+  const shell = os.platform() === 'win32' ? 'powershell.exe' : 'bash';
+
+  // Create a login shell mimicking standard terminal behavior 
+  // and run the user's specific command
+  let args = [];
+  if (os.platform() === 'win32') {
+    args = ['-NoProfile', '-Command', command];
+  } else {
+    args = ['-c', command];
+  }
+
+  const ptyProcess = pty.spawn(shell, args, {
+    name: 'xterm-color',
+    cols: 80,
+    rows: 30,
+    cwd: targetPath,
+    env: process.env,
+    useConpty: false // Required on some win32 setups for stability with node-pty
+  });
+
+  terminals[`ai-${commandId}`] = ptyProcess;
+
+  ptyProcess.on('data', (data) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send(`terminal:aiData-${commandId}`, { data });
+    }
+  });
+
+  ptyProcess.on('exit', (exitCode) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send(`terminal:aiExit-${commandId}`, { exitCode });
+    }
+    delete terminals[`ai-${commandId}`];
+  });
+
+  return { success: true };
+});
+
+ipcMain.handle('terminal:aiWritePty', (event, { commandId, data }) => {
+  const ptyProc = terminals[`ai-${commandId}`];
+  if (ptyProc) {
+    ptyProc.write(data);
+  }
+});
+
+ipcMain.handle('terminal:aiKillPty', (event, commandId) => {
+  const ptyProc = terminals[`ai-${commandId}`];
+  if (ptyProc) {
+    ptyProc.kill();
+    delete terminals[`ai-${commandId}`];
+  }
+});
+
 
 // --- File System Watcher ---
 // ... (यह और बाकी की सभी फाइलें वैसी ही रहेंगी, कोई बदलाव नहीं) ...
@@ -153,7 +209,7 @@ function readDirectoryRecursively(dirPath, rootPath) {
       const relativePath = normalizePath(path.relative(rootPath, fullPath));
       const parentFolder = normalizePath(path.dirname(relativePath));
 
-      if (['node_modules', 'dist'].includes(entry.name)) return;
+      if (['node_modules', 'dist', '.git'].includes(entry.name)) return;
 
       if (entry.isDirectory()) {
         folderList.push({ name: entry.name, path: relativePath, realPath: normalizedPath });
@@ -188,6 +244,30 @@ ipcMain.handle('fs:createFolder', async (e, p) => { try { if (!fs.existsSync(p))
 ipcMain.handle('fs:deletePath', async (e, p) => { try { fs.rmSync(p, { recursive: true, force: true }); return { success: true }; } catch (err) { return { success: false, error: err.message }; } });
 ipcMain.handle('fs:renamePath', async (e, { oldPath, newPath }) => { try { fs.renameSync(oldPath, newPath); return { success: true }; } catch (err) { return { success: false, error: err.message }; } });
 
+// --- Snapshot Restore (for AI Accept/Reject) ---
+ipcMain.handle('fs:restoreSnapshot', async (e, { filePath, content, isNewFile }) => {
+  try {
+    if (isNewFile) {
+      // AI created this file — delete it on reject
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+        // Clean up empty parent dirs created by AI
+        const parentDir = path.dirname(filePath);
+        try {
+          const items = fs.readdirSync(parentDir);
+          if (items.length === 0) fs.rmdirSync(parentDir);
+        } catch { /* ignore */ }
+      }
+    } else {
+      // Restore original content
+      fs.writeFileSync(filePath, content, 'utf-8');
+    }
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
 // --- Timeline Handlers ---
 ipcMain.handle('timeline:getHistory', async (event, filePath) => {
   try {
@@ -212,133 +292,220 @@ ipcMain.handle('timeline:getVersion', async (event, { filePath, id }) => {
 ipcMain.handle('window:close', () => mainWindow.close());
 ipcMain.handle('os:homedir', () => os.homedir());
 
-// ... (सभी Git और Extension हैंडलर्स वैसे ही रहेंगे) ...
-// --- Git Handlers ---
-// 1. Get Detailed Status (Staged, Unstaged, Branch, Remote)
+// --- Git Handlers (Secure — powered by simple-git) ---
+const simpleGit = require('simple-git');
+
+// Helper: get a safe simple-git instance for a given directory
+const getGit = (cwd) => simpleGit({ baseDir: cwd, binary: 'git', maxConcurrentProcesses: 4 });
+
+// 1. Get Detailed Status
 ipcMain.handle('git:status', async (event, cwd) => {
-  return new Promise((resolve) => {
+  try {
     if (!fs.existsSync(path.join(cwd, '.git'))) {
-      resolve({ isRepo: false, files: [], branch: '', hasRemote: false });
-      return;
+      return { isRepo: false, files: [], branch: '', hasRemote: false, ahead: 0, behind: 0 };
     }
+    const git = getGit(cwd);
+    const status = await git.status();
+    const remotes = await git.getRemotes(true);
+    const hasRemote = remotes.length > 0 && remotes.some(r => r.name === 'origin');
 
-    // Command to get branch and remote in one go
-    const command = 'git branch --show-current && git remote -v';
-
-    exec(command, { cwd }, (err, stdout) => {
-      const output = stdout.split('\n');
-      const currentBranch = output[0] ? output[0].trim() : 'HEAD';
-      const hasRemote = output.length > 1 && output[1].trim() !== '';
-
-      // Get File Status
-      exec('git status --porcelain', { cwd }, (error, stdoutStatus) => {
-        if (error) { resolve({ isRepo: true, files: [], branch: currentBranch, hasRemote }); return; }
-
-        const files = stdoutStatus.split('\n').filter(line => line.trim() !== '').map(line => {
-          let fileName = line.substring(3).trim();
-          if (fileName.startsWith('"') && fileName.endsWith('"')) fileName = fileName.slice(1, -1);
-
-          const statusCode = line.substring(0, 2);
-          const isStaged = statusCode[0] !== ' ' && statusCode[0] !== '?';
-          let status = 'M';
-          if (statusCode.includes('??')) status = 'U';
-          else if (statusCode.includes('D')) status = 'D';
-          else if (statusCode.includes('A')) status = 'A';
-          return { path: fileName, status, staged: isStaged };
-        });
-
-        resolve({ isRepo: true, files, branch: currentBranch, hasRemote });
-      });
+    // Build file list from status
+    const files = [];
+    // Staged files
+    status.staged.forEach(f => {
+      const entry = status.files.find(fi => fi.path === f);
+      let st = 'M';
+      if (entry) {
+        if (entry.index === 'A' || entry.index === '?') st = 'A';
+        else if (entry.index === 'D') st = 'D';
+        else if (entry.index === 'R') st = 'R';
+        else st = entry.index || 'M';
+      }
+      files.push({ path: f, status: st, staged: true });
     });
-  });
+    // Unstaged (modified, deleted, not_added, etc.)
+    status.modified.forEach(f => {
+      if (!files.some(fi => fi.path === f && !fi.staged)) {
+        files.push({ path: f, status: 'M', staged: false });
+      }
+    });
+    status.deleted.forEach(f => {
+      if (!files.some(fi => fi.path === f && !fi.staged)) {
+        files.push({ path: f, status: 'D', staged: false });
+      }
+    });
+    status.not_added.forEach(f => {
+      files.push({ path: f, status: 'U', staged: false });
+    });
+    status.renamed.forEach(r => {
+      files.push({ path: r.to, status: 'R', staged: true, oldPath: r.from });
+    });
+
+    return {
+      isRepo: true,
+      files,
+      branch: status.current || 'HEAD',
+      hasRemote,
+      ahead: status.ahead || 0,
+      behind: status.behind || 0,
+      tracking: status.tracking || ''
+    };
+  } catch (e) {
+    return { isRepo: false, files: [], branch: '', hasRemote: false, ahead: 0, behind: 0, error: e.message };
+  }
 });
 
 // 2. Initialize Repo
 ipcMain.handle('git:init', async (event, cwd) => {
-  return new Promise(r => exec('git init', { cwd }, (e) => r({ success: !e })));
+  try {
+    const git = getGit(cwd);
+    await git.init();
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
 });
 
-// 3. Stage & Unstage
+// 3. Stage & Unstage (safe — no shell interpolation)
 ipcMain.handle('git:stage', async (event, { cwd, file }) => {
-  return new Promise(r => exec(`git add "${file}"`, { cwd }, (e) => r(!e)));
-});
-ipcMain.handle('git:unstage', async (event, { cwd, file }) => {
-  const cmd = file === '.' ? 'git restore --staged .' : `git restore --staged "${file}"`;
-  return new Promise(r => exec(cmd, { cwd }, (e) => r(!e)));
+  try {
+    const git = getGit(cwd);
+    await git.add(file);
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
 });
 
-// 4. Commit
+ipcMain.handle('git:unstage', async (event, { cwd, file }) => {
+  try {
+    const git = getGit(cwd);
+    await git.reset(['HEAD', '--', file]);
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+// 4. Commit (safe — message passed as argument, never interpolated into shell)
 ipcMain.handle('git:commit', async (event, { cwd, message }) => {
-  return new Promise(r => exec(`git commit -m "${message}"`, { cwd }, (e) => r({ success: !e, error: e?.message })));
+  try {
+    const git = getGit(cwd);
+    const result = await git.commit(message);
+    return { success: true, summary: { changes: result.summary.changes, insertions: result.summary.insertions, deletions: result.summary.deletions } };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
 });
 
 // 5. Branch Management
 ipcMain.handle('git:getBranches', async (event, cwd) => {
-  return new Promise(r => exec('git branch -a', { cwd }, (e, out) => r(e ? [] : [...new Set(out.split('\n').map(b => b.trim().replace('* ', '')).filter(b => b && !b.includes('->')).map(b => b.replace('remotes/origin/', '')))])));
-});
-ipcMain.handle('git:checkout', async (event, { cwd, branch }) => {
-  return new Promise(r => exec(`git checkout "${branch}"`, { cwd }, (e) => r({ success: !e })));
-});
-ipcMain.handle('git:createBranch', async (event, { cwd, branch }) => {
-  return new Promise(r => exec(`git checkout -b "${branch}"`, { cwd }, (e) => r({ success: !e })));
-});
-
-// 6. Push & Pull
-// main.js
-ipcMain.handle('git:push', async (event, { cwd, token }) => { // <--- यहाँ बदलें
-  console.log(`Pushing to repo in: ${cwd}`); // <-- डीबगिंग के लिए लॉग जोड़ें
-  return new Promise((resolve) => {
-    exec('git remote get-url origin', { cwd }, (err, url) => {
-      if (err || !url) {
-        console.error("Git Push Error: No remote found.");
-        resolve({ success: false, error: 'No remote URL configured for origin' });
-        return;
-      }
-      let repoUrl = url.trim();
-      if (token && repoUrl.startsWith('https://github.com/')) {
-        repoUrl = repoUrl.replace('https://', `https://${token}@`);
-      }
-
-      // डीबगिंग के लिए कमांड को लॉग करें (टोकन को छोड़कर)
-      console.log(`Executing push command for URL: ${repoUrl.replace(token, '****')}`);
-
-      exec(`git push "${repoUrl}"`, { cwd }, (error, stdout, stderr) => {
-        if (error) {
-          console.error('Git Push Stderr:', stderr); // <-- वास्तविक त्रुटि को लॉग करें!
-          resolve({ success: false, error: stderr || error.message });
-          return;
-        }
-        resolve({ success: true });
-      });
-    });
-  });
-});
-ipcMain.handle('git:pull', async (event, cwd) => {
-  return new Promise(r => exec('git pull', { cwd }, (e) => r({ success: !e, error: e?.message })));
-});
-
-// main.js - इस पूरे फंक्शन को बदलें
-
-// 7. Publish to GitHub (New & Improved)
-// main.js - ipcMain.handle('git:publish', ...) को इससे बदलें
-
-ipcMain.handle('git:publish', async (event, { cwd, token, repoName, isPrivate, useExisting, existingRepoUrl }) => {
-  console.log('--- Starting Publish Process ---');
-  console.log('Received data:', { repoName, isPrivate, useExisting });
-
   try {
+    const git = getGit(cwd);
+    const branchSummary = await git.branch(['-a']);
+    const localBranches = branchSummary.all
+      .map(b => b.replace('remotes/origin/', ''))
+      .filter(b => b && !b.includes('->'));
+    return { success: true, branches: [...new Set(localBranches)], current: branchSummary.current };
+  } catch (e) {
+    return { success: false, branches: [], error: e.message };
+  }
+});
+
+ipcMain.handle('git:checkout', async (event, { cwd, branch }) => {
+  try {
+    const git = getGit(cwd);
+    await git.checkout(branch);
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('git:createBranch', async (event, { cwd, branch }) => {
+  try {
+    const git = getGit(cwd);
+    await git.checkoutLocalBranch(branch);
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('git:deleteBranch', async (event, { cwd, branch, force }) => {
+  try {
+    const git = getGit(cwd);
+    await git.deleteLocalBranch(branch, force || false);
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('git:merge', async (event, { cwd, branch }) => {
+  try {
+    const git = getGit(cwd);
+    const result = await git.merge([branch]);
+    return { success: true, result: result.result };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+// 6. Push & Pull (secure — token injected into remote URL safely)
+ipcMain.handle('git:push', async (event, { cwd, token }) => {
+  try {
+    const git = getGit(cwd);
+    const remotes = await git.getRemotes(true);
+    const origin = remotes.find(r => r.name === 'origin');
+    if (!origin) {
+      return { success: false, error: 'No remote URL configured for origin.' };
+    }
+
+    let pushUrl = origin.refs.push || origin.refs.fetch;
+    if (token && pushUrl.startsWith('https://github.com/')) {
+      pushUrl = pushUrl.replace('https://', `https://${token}@`);
+    }
+
+    await git.push(pushUrl);
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('git:pull', async (event, cwd) => {
+  try {
+    const git = getGit(cwd);
+    const result = await git.pull();
+    return { success: true, summary: result.summary };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+// 7. Publish to GitHub
+ipcMain.handle('git:publish', async (event, { cwd, token, repoName, description, isPrivate, useExisting, existingRepoUrl, gitignoreTemplate, addReadme }) => {
+  try {
+    const git = getGit(cwd);
     let remoteUrl = existingRepoUrl;
 
-    // 1. अगर नया बना रहे हैं तो रिमोट यूआरएल बनाएं या प्राप्त करें
     if (!useExisting) {
-      console.log(`Attempting to create NEW repository named: ${repoName}`);
+      const payload = {
+        name: repoName,
+        private: isPrivate
+      };
+
+      if (description) payload.description = description;
+      if (gitignoreTemplate) payload.gitignore_template = gitignoreTemplate;
+      if (addReadme) payload.auto_init = true;
+
       const createResponse = await fetch('https://api.github.com/user/repos', {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: repoName, private: isPrivate })
+        body: JSON.stringify(payload)
       });
       const data = await createResponse.json();
-      console.log('GitHub API Response:', data);
 
       if (!createResponse.ok) {
         if (data.errors && data.errors[0]?.message.includes('name already exists')) {
@@ -353,68 +520,188 @@ ipcMain.handle('git:publish', async (event, { cwd, token, repoName, isPrivate, u
       }
     }
 
-    if (!remoteUrl) {
-      throw new Error('Could not determine remote URL.');
-    }
+    if (!remoteUrl) throw new Error('Could not determine remote URL.');
 
     const authRemoteUrl = remoteUrl.replace('https://', `https://${token}@`);
 
-    // 2. Git कमांड को एक-एक करके चलाएं
-    const run = (cmd) => new Promise((resolve, reject) => {
-      console.log(`Executing: ${cmd.replace(token, '****')}`);
-      exec(cmd, { cwd }, (err, stdout, stderr) => {
-        // कुछ सामान्य, गैर-घातक चेतावनियों को अनदेखा करें
-        if (err && !stderr.includes('already exists') && !stderr.includes('up-to-date')) {
-          console.error(`Command failed: ${cmd}\nStderr: ${stderr}`);
-          return reject(new Error(stderr));
-        }
-        resolve(stdout);
-      });
-    });
+    // Initialize if not already a repo
+    const isRepo = fs.existsSync(path.join(cwd, '.git'));
+    if (!isRepo) await git.init();
 
-    await run('git init');
-    await run('git add .');
-    await run('git commit -m "Initial commit" || echo "No changes to commit"'); // अगर कोई बदलाव न हो तो विफल न हों
-    await run('git branch -M main');
-    await run(`git remote add origin "${authRemoteUrl}" || git remote set-url origin "${authRemoteUrl}"`);
+    await git.add('.');
 
-    // 🔥 मुख्य बदलाव: अंतिम पुश को try/catch में रखें
     try {
-      await run('git push -u origin main');
-      console.log('--- Publish Process Successful ---');
-      return { success: true };
-    } catch (pushError) {
-      // 🔥 अगर पुश विफल होता है, तो रिमोट को हटा दें!
-      console.error('Push failed. Reverting by removing remote.');
-      await run('git remote remove origin');
-      throw pushError; // मूल त्रुटि को आगे फेंकें
+      await git.commit('Initial commit');
+    } catch (commitErr) {
+      // Ignore if nothing to commit
+      if (!commitErr.message.includes('nothing to commit')) throw commitErr;
     }
 
+    await git.branch(['-M', 'main']);
+
+    // Set remote
+    const remotes = await git.getRemotes();
+    if (remotes.some(r => r.name === 'origin')) {
+      await git.remote(['set-url', 'origin', authRemoteUrl]);
+    } else {
+      await git.addRemote('origin', authRemoteUrl);
+    }
+
+    try {
+      await git.push(['-u', 'origin', 'main']);
+      return { success: true };
+    } catch (pushError) {
+      // Revert remote on push failure
+      try { await git.removeRemote('origin'); } catch (_) { }
+      throw pushError;
+    }
   } catch (e) {
-    console.error('--- Publish Process FAILED ---');
-    console.error('Error:', e.message);
     return { success: false, error: e.message };
   }
 });
+
 // 8. Get User's Repos from GitHub
 ipcMain.handle('git:getGithubRepos', async (event, token) => {
-  if (!token) {
-    return { success: false, error: 'Token not provided' };
-  }
+  if (!token) return { success: false, error: 'Token not provided' };
   try {
     const response = await fetch('https://api.github.com/user/repos?sort=updated&per_page=100', {
       headers: { 'Authorization': `Bearer ${token}` }
     });
-    if (!response.ok) {
-      return { success: false, error: 'Failed to fetch repos from GitHub' };
-    }
+    if (!response.ok) return { success: false, error: 'Failed to fetch repos from GitHub' };
     const repos = await response.json();
-    // हम केवल नाम और क्लोन यूआरएल भेजेंगे जो हमें चाहिए
-    const repoData = repos.map(repo => ({
-      name: repo.name,
-      clone_url: repo.clone_url
-    }));
-    return { success: true, repos: repoData };
+    return { success: true, repos: repos.map(repo => ({ name: repo.name, clone_url: repo.clone_url, private: repo.private, description: repo.description })) };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+// 9. Commit History (Log)
+ipcMain.handle('git:log', async (event, { cwd, maxCount }) => {
+  try {
+    const git = getGit(cwd);
+    const log = await git.log({ maxCount: maxCount || 50 });
+    return {
+      success: true,
+      commits: log.all.map(c => ({
+        hash: c.hash,
+        hashShort: c.hash.substring(0, 7),
+        message: c.message,
+        author: c.author_name,
+        email: c.author_email,
+        date: c.date
+      }))
+    };
+  } catch (e) {
+    return { success: false, commits: [], error: e.message };
+  }
+});
+
+// 10. Diff (file-level)
+ipcMain.handle('git:diff', async (event, { cwd, file, staged }) => {
+  try {
+    const git = getGit(cwd);
+    const args = staged ? ['--cached'] : [];
+    if (file) args.push('--', file);
+    const diff = await git.diff(args);
+    return { success: true, diff };
+  } catch (e) {
+    return { success: false, diff: '', error: e.message };
+  }
+});
+
+// 11. Stash Management
+ipcMain.handle('git:stash', async (event, { cwd, message }) => {
+  try {
+    const git = getGit(cwd);
+    if (message) {
+      await git.stash(['push', '-m', message]);
+    } else {
+      await git.stash(['push']);
+    }
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('git:stashList', async (event, cwd) => {
+  try {
+    const git = getGit(cwd);
+    const result = await git.stashList();
+    return {
+      success: true,
+      stashes: result.all.map((s, i) => ({
+        index: i,
+        hash: s.hash,
+        message: s.message,
+        date: s.date
+      }))
+    };
+  } catch (e) {
+    return { success: false, stashes: [], error: e.message };
+  }
+});
+
+ipcMain.handle('git:stashApply', async (event, { cwd, index }) => {
+  try {
+    const git = getGit(cwd);
+    await git.stash(['apply', `stash@{${index || 0}}`]);
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('git:stashPop', async (event, { cwd, index }) => {
+  try {
+    const git = getGit(cwd);
+    await git.stash(['pop', `stash@{${index || 0}}`]);
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('git:stashDrop', async (event, { cwd, index }) => {
+  try {
+    const git = getGit(cwd);
+    await git.stash(['drop', `stash@{${index || 0}}`]);
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+// 12. Discard File Changes
+ipcMain.handle('git:discard', async (event, { cwd, file }) => {
+  try {
+    const git = getGit(cwd);
+    const status = await git.status();
+    const isUntracked = status.not_added.includes(file);
+    if (isUntracked) {
+      // Delete untracked file
+      const fullPath = path.join(cwd, file);
+      if (fs.existsSync(fullPath)) fs.rmSync(fullPath, { force: true });
+    } else {
+      // Restore tracked file to last committed state
+      await git.checkout(['--', file]);
+    }
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+// 13. Clone Repository
+ipcMain.handle('git:clone', async (event, { url, targetDir, token }) => {
+  try {
+    let cloneUrl = url;
+    if (token && cloneUrl.startsWith('https://github.com/')) {
+      cloneUrl = cloneUrl.replace('https://', `https://${token}@`);
+    }
+    const git = simpleGit();
+    await git.clone(cloneUrl, targetDir);
+    return { success: true };
   } catch (e) {
     return { success: false, error: e.message };
   }

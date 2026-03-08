@@ -133,15 +133,20 @@ class SessionManager {
     /**
      * Add a message to the session and persist
      */
-    async addMessage(chatId, role, content) {
+    async addMessage(chatId, role, content, attachments = null) {
         const strChatId = String(chatId);
         const session = await this.getSession(strChatId);
 
-        session.messages.push({
+        const msg = {
             role,
             content,
             timestamp: Date.now()
-        });
+        };
+        if (attachments && attachments.length > 0) {
+            msg.attachments = attachments;
+        }
+
+        session.messages.push(msg);
 
         // Trigger memory management (summarize old messages if needed)
         if (this.memoryEngine) {

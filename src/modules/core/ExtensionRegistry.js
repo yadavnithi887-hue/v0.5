@@ -3,6 +3,7 @@ import * as PrettierFormatter from '../extensions/prettier-formatter';
 import * as LiveServer from '../extensions/live-server';
 import * as TodoManager from '../extensions/todo-manager';
 import * as ThemePicker from '../extensions/theme-picker';
+import * as IconPack from '../extensions/icon-pack';
 import * as RestClient from '../extensions/rest-client';
 import * as LoremGenerator from '../extensions/lorem-generator';
 
@@ -15,6 +16,7 @@ class ExtensionRegistry {
 
       TodoManager,
       ThemePicker,
+      IconPack,
       RestClient,
       LoremGenerator
     ];
@@ -32,6 +34,7 @@ class ExtensionRegistry {
     // Callbacks for real-time updates
     this.statusBarCallbacks = [];
     this.editorButtonCallbacks = [];
+    this.registryUpdateCallbacks = [];
 
     // 🔥 NEW: Extension state management
     this.extensionStates = new Map(); // Track enabled/disabled state
@@ -91,6 +94,7 @@ class ExtensionRegistry {
     if (this.context) {
       this.initialize(this.context);
     }
+    this.emitRegistryUpdate();
   }
 
   // 🔥 Get all extensions with metadata
@@ -178,9 +182,18 @@ class ExtensionRegistry {
               // Create status bar item
               createStatusBarItem: (item) => {
                 // console.log(`  ✓ Status bar item created:`, item);
-
                 const itemWithExtId = { ...item, extensionId: extId };
-                this.statusBarItems.push(itemWithExtId);
+                const existingIndex = this.statusBarItems.findIndex(
+                  (statusItem) =>
+                    statusItem.id === itemWithExtId.id &&
+                    statusItem.extensionId === itemWithExtId.extensionId
+                );
+
+                if (existingIndex >= 0) {
+                  this.statusBarItems[existingIndex] = itemWithExtId;
+                } else {
+                  this.statusBarItems.push(itemWithExtId);
+                }
 
                 this.statusBarCallbacks.forEach(cb => {
                   try {
@@ -219,6 +232,7 @@ class ExtensionRegistry {
     });
 
     this.initialized = true;
+    this.emitRegistryUpdate();
     // console.log("✅ All extensions initialized");
     // console.log(`📊 Active: ${this.extensionMetadata.filter(e => e.enabled).length}/${this.extensionMetadata.length}`);
   }
@@ -241,7 +255,12 @@ class ExtensionRegistry {
   }
 
   getStatusBarItems() {
-    return this.statusBarItems;
+    const deduped = new Map();
+    this.statusBarItems.forEach((item) => {
+      const key = `${item.extensionId || 'global'}:${item.id || ''}`;
+      deduped.set(key, item);
+    });
+    return Array.from(deduped.values());
   }
 
   getEditorButtons() {
@@ -308,6 +327,34 @@ class ExtensionRegistry {
       );
     };
   }
+  onRegistryUpdate(callback) {
+    this.registryUpdateCallbacks.push(callback);
+
+    if (this.initialized) {
+      try {
+        callback();
+      } catch (e) {
+        console.error('Error in initial registry update callback:', e);
+      }
+    }
+
+    return () => {
+      this.registryUpdateCallbacks = this.registryUpdateCallbacks.filter(
+        cb => cb !== callback
+      );
+    };
+  }
+
+  emitRegistryUpdate() {
+    this.registryUpdateCallbacks.forEach((cb) => {
+      try {
+        cb();
+      } catch (e) {
+        console.error('Error in registry update callback:', e);
+      }
+    });
+  }
 }
 
 export const registry = new ExtensionRegistry();
+

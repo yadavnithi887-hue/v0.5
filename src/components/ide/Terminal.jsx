@@ -5,170 +5,143 @@ import { WebLinksAddon } from 'xterm-addon-web-links';
 import { SearchAddon } from 'xterm-addon-search';
 import { Unicode11Addon } from 'xterm-addon-unicode11';
 import 'xterm/css/xterm.css';
-import { ChevronUp, X, Minus, Plus, Trash2, Monitor, AlertCircle, AlertTriangle, ExternalLink, Bot } from 'lucide-react';
+import { ChevronUp, ChevronDown, ChevronRight, X, Minus, Plus, Trash2, Monitor, AlertCircle, AlertTriangle, ExternalLink, Bot, Filter, Copy, List } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { getIdeTheme } from '@/lib/ideThemes';
 import { toast } from 'sonner';
 import { io as socketIO } from 'socket.io-client';
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu';
 
-// --- Problems Tab (Enhanced) ---
-const ProblemsTab = ({ problems, onNavigate }) => {
-  const [copiedIndex, setCopiedIndex] = useState(null);
-  const [expandedIndex, setExpandedIndex] = useState(null);
+// --- Problems Tab (VS Code-style) ---
+const ProblemsTab = ({ problems, onNavigate, query = '' }) => {
+  const [expandedGroups, setExpandedGroups] = useState({});
 
-  const handleCopy = (prob, index, e) => {
-    e.stopPropagation();
-    // Copy full error with code block format
-    const fullLog = `## ${prob.severity === 'Error' ? '❌ Error' : '⚠️ Warning'}: ${prob.message}
+  const normalizedQuery = query.trim().toLowerCase();
+  const filteredProblems = problems.filter((p) => {
+    if (!normalizedQuery) return true;
+    return (
+      String(p.file || '').toLowerCase().includes(normalizedQuery) ||
+      String(p.message || '').toLowerCase().includes(normalizedQuery) ||
+      String(p.source || '').toLowerCase().includes(normalizedQuery)
+    );
+  });
 
-**File:** ${prob.file}
-**Line:** ${prob.line}
-**Source:** ${prob.source || 'Unknown'}
+  const grouped = filteredProblems.reduce((acc, problem) => {
+    const file = String(problem.file || 'unknown');
+    if (!acc[file]) acc[file] = [];
+    acc[file].push(problem);
+    return acc;
+  }, {});
 
-\`\`\`
-${prob.file}:${prob.line}
-${prob.message}
-\`\`\``;
-
-    navigator.clipboard.writeText(fullLog);
-    setCopiedIndex(index);
-    toast.success('Error copied to clipboard!');
-    setTimeout(() => setCopiedIndex(null), 2000);
-  };
-
-  const handleCopySimple = (prob, index, e) => {
-    e.stopPropagation();
-    const simpleCopy = `${prob.file}:${prob.line} - ${prob.message}`;
-    navigator.clipboard.writeText(simpleCopy);
-    setCopiedIndex(index);
-    toast.success('Copied!');
-    setTimeout(() => setCopiedIndex(null), 2000);
-  };
+  const files = Object.keys(grouped).sort((a, b) => a.localeCompare(b));
 
   if (problems.length === 0) {
     return (
-      <div className="absolute inset-0 flex flex-col items-center justify-center text-[#888] gap-2">
-        <div className="text-4xl">✓</div>
-        <div className="text-sm">No problems detected in workspace</div>
+      <div className="absolute inset-0 flex items-center justify-center text-[#8a8a8a] text-[13px]" style={{ fontFamily: '"Segoe UI", Inter, sans-serif' }}>
+        No problems have been detected in the workspace.
       </div>
     );
   }
 
-  const errorCount = problems.filter(p => p.severity === 'Error').length;
-  const warningCount = problems.filter(p => p.severity === 'Warning').length;
-
   return (
-    <div className="h-full flex flex-col">
-      {/* Summary Header */}
-      <div className="flex items-center gap-4 px-3 py-2 bg-[#252526] border-b border-[#3c3c3c] text-xs">
-        <div className="flex items-center gap-1">
-          <AlertCircle size={12} className="text-red-400" />
-          <span className="text-red-400">{errorCount} Errors</span>
-        </div>
-        <div className="flex items-center gap-1">
-          <AlertTriangle size={12} className="text-yellow-400" />
-          <span className="text-yellow-400">{warningCount} Warnings</span>
-        </div>
-        <div className="flex-1" />
+    <div className="w-full min-w-0 flex-1 h-full flex flex-col text-[13px]" style={{ fontFamily: '"Segoe UI", Inter, sans-serif' }}>
+      <div className="h-8 flex items-center justify-between px-4 border-b border-[#2c2c2c] text-[#d4d4d4]">
+        <span>Problems Workspace</span>
         <button
-          onClick={() => navigator.clipboard.writeText(problems.map(p => `[${p.severity}] ${p.file}:${p.line} - ${p.message}`).join('\n')).then(() => toast.success('All problems copied!'))}
-          className="text-[#888] hover:text-white text-xs px-2 py-1 hover:bg-[#3c3c3c] rounded"
+          onClick={() => {
+            window.dispatchEvent(new CustomEvent('devstudio:send-to-agent', {
+              detail: { type: 'all', problems: filteredProblems }
+            }));
+          }}
+          className="px-2 py-0.5 text-[11px] bg-[#3a3a3a] hover:bg-[#0e639c] text-white rounded cursor-pointer flex items-center gap-1.5 transition-colors"
         >
-          Copy All
+          <Bot size={12} /> Send all to Agent
         </button>
       </div>
 
-      {/* Problems List */}
-      <div className="flex-1 overflow-y-auto">
-        {problems.map((prob, i) => (
-          <div
-            key={i}
-            className={cn(
-              "border-b border-[#2d2d2d] hover:bg-[#2a2d2e] transition-colors",
-              expandedIndex === i && "bg-[#2a2d2e]"
-            )}
-          >
-            {/* Problem Row */}
-            <div
-              onClick={() => onNavigate && onNavigate(prob.file, prob.line, prob.severity)}
-              className="flex items-center gap-2 px-3 py-2 cursor-pointer group"
-            >
-              {/* Severity Icon */}
-              {prob.severity === 'Error' ? (
-                <AlertCircle size={14} className="text-red-400 flex-shrink-0" />
-              ) : (
-                <AlertTriangle size={14} className="text-yellow-400 flex-shrink-0" />
-              )}
-
-              {/* Message */}
-              <div className="flex-1 min-w-0">
-                <span className="text-[#d4d4d4] text-sm truncate block">{prob.message}</span>
-              </div>
-
-              {/* Source Badge */}
-              <span className="text-[10px] px-1.5 py-0.5 bg-[#3c3c3c] text-[#888] rounded flex-shrink-0">
-                {prob.source || 'TS'}
-              </span>
-
-              {/* File Location */}
-              <span className="text-[#6a9955] text-xs font-mono flex-shrink-0">
-                {prob.file}:{prob.line}
-              </span>
-
-              {/* Copy Button */}
-              <button
-                onClick={(e) => handleCopySimple(prob, i, e)}
-                className="opacity-0 group-hover:opacity-100 hover:bg-[#4a4a4a] p-1 rounded transition-opacity"
-                title="Copy error"
-              >
-                {copiedIndex === i ? (
-                  <span className="text-green-400 text-xs">✓</span>
-                ) : (
-                  <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-[#888]">
-                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-                  </svg>
-                )}
-              </button>
-
-              {/* Expand Button */}
-              <button
-                onClick={(e) => { e.stopPropagation(); setExpandedIndex(expandedIndex === i ? null : i); }}
-                className="hover:bg-[#4a4a4a] p-1 rounded"
-                title="Show details"
-              >
-                <ChevronUp size={12} className={cn("text-[#888] transition-transform", expandedIndex === i ? "rotate-180" : "")} />
-              </button>
-            </div>
-
-            {/* Expanded Details */}
-            {expandedIndex === i && (
-              <div className="px-3 pb-3 bg-[#1e1e1e] mx-2 mb-2 rounded border border-[#3c3c3c]">
-                <div className="text-xs text-[#888] mb-1 mt-2">Full Error:</div>
-                <pre className="text-xs text-[#ce9178] bg-[#252526] p-2 rounded overflow-x-auto font-mono">
-                  {`[${prob.severity}] ${prob.message}
-  
-  at ${prob.file}:${prob.line}
-  Source: ${prob.source || 'TypeScript/JavaScript'}`}
-                </pre>
-                <button
-                  onClick={(e) => handleCopy(prob, i, e)}
-                  className="mt-2 text-xs bg-[#0e639c] hover:bg-[#1177bb] text-white px-3 py-1 rounded flex items-center gap-1"
+      <div className="flex-1 overflow-y-auto pb-10">
+        {files.length === 0 ? (
+          <div className="h-full flex items-center justify-center text-[#8a8a8a] text-[13px]">No results found.</div>
+        ) : (
+          files.map((file) => {
+            const items = grouped[file];
+            const open = expandedGroups[file] ?? true;
+            const ext = file.split('.').pop()?.toUpperCase() || 'FILE';
+            return (
+              <div key={file} className="border-b border-[#232323]">
+                <div
+                  onClick={() => setExpandedGroups((prev) => ({ ...prev, [file]: !open }))}
+                  className="w-full h-8 px-3 flex items-center gap-2 text-left hover:bg-[#252526] cursor-pointer"
                 >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-                  </svg>
-                  Copy with Markdown
-                </button>
+                  {open ? <ChevronDown size={14} className="text-[#c5c5c5]" /> : <ChevronRight size={14} className="text-[#c5c5c5]" />}
+                  <span className="text-[#d7ba7d] text-[11px] font-semibold">{ext}</span>
+                  <span className="text-[#d4d4d4] truncate">{file}</span>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      window.dispatchEvent(new CustomEvent('devstudio:send-to-agent', {
+                        detail: { type: 'file', file: file, problems: items }
+                      }));
+                    }}
+                    className="text-[#8a8a8a] hover:text-white text-[10px] mr-2 flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-[#3a3a3a] transition-colors"
+                  >
+                    <Bot size={11} /> Send to Agent
+                  </button>
+                </div>
+
+                {
+                  open && (
+                    <div className="pl-8 pb-1">
+                      {items.map((p, idx) => {
+                        const isError = p.severity === 'Error';
+                        const code = p.code || (isError ? 'ts(1005)' : 'ts(6133)');
+                        const ln = p.line || 1;
+                        const col = p.column || 1;
+                        return (
+                          <ContextMenu key={`${file}:${ln}:${idx}`}>
+                            <ContextMenuTrigger>
+                              <div
+                                className="h-7 pr-4 flex items-center gap-2 hover:bg-[#2a2d2e] cursor-pointer"
+                                onClick={() => onNavigate && onNavigate(p.filePath || p.file, p.line, p.severity)}
+                              >
+                                {isError ? <AlertCircle size={14} className="text-[#f14c4c] shrink-0" /> : <AlertTriangle size={14} className="text-[#cca700] shrink-0" />}
+                                <span className="text-[#dcdcdc] truncate">{p.message}</span>
+                                <span className="text-[#8f8f8f] whitespace-nowrap">{code}</span>
+                                <span className="text-[#8f8f8f] whitespace-nowrap">[Ln {ln}, Col {col}]</span>
+                              </div>
+                            </ContextMenuTrigger>
+                            <ContextMenuContent className="bg-[#252526] border-[#3c3c3c] text-white min-w-[220px]">
+                              <ContextMenuItem onClick={() => onNavigate && onNavigate(p.filePath || p.file, p.line, p.severity)}>
+                                Go to Problem
+                              </ContextMenuItem>
+                              <ContextMenuItem onClick={() => navigator.clipboard.writeText(String(p.message || ''))}>
+                                Copy Message
+                              </ContextMenuItem>
+                              <ContextMenuItem
+                                onClick={() => navigator.clipboard.writeText(`${p.filePath || p.file}:${ln}:${col} - ${p.message}`)}
+                              >
+                                Copy Full
+                              </ContextMenuItem>
+                            </ContextMenuContent>
+                          </ContextMenu>
+                        );
+                      })}
+                    </div>
+                  )
+                }
               </div>
-            )}
-          </div>
-        ))}
+            );
+          })
+        )}
       </div>
-    </div>
+    </div >
   );
 };
-
 // --- Single Terminal Instance ---
 const TerminalInstance = ({ id, active, onData, settings = {} }) => {
   const terminalRef = useRef(null);
@@ -192,29 +165,18 @@ const TerminalInstance = ({ id, active, onData, settings = {} }) => {
 
   useEffect(() => {
     if (!window.electronAPI) return;
+    const activeTheme = getIdeTheme(settings.ideTheme);
 
     const term = new XTerminal({
-      theme: {
-        background: '#1e1e1e',
-        foreground: '#cccccc',
-        cursor: '#00ff00',
-        cursorAccent: '#000000',
-        selection: '#264f78',
-        black: '#000000',
-        red: '#f14c4c',
-        green: '#23d18b',
-        yellow: '#f5f543',
-        blue: '#3b8eea',
-        magenta: '#d670d6',
-        cyan: '#29b8db',
-        white: '#e5e5e5'
-      },
+      theme: activeTheme.terminal,
       fontFamily: settings.terminalFontFamily || "'Fira Code', Consolas, 'Courier New', monospace",
       fontSize: settings.terminalFontSize || 14,
       cursorBlink: settings.terminalCursorBlinking !== false,
       cursorStyle: settings.terminalCursorStyle || 'block',
-      cursorWidth: 2,
+      cursorWidth: settings.terminalCursorWidth || 2,
+      lineHeight: settings.terminalLineHeight || 1.2,
       scrollback: settings.terminalScrollback || 1000,
+      rendererType: settings.terminalRendererType || 'canvas',
       convertEol: true,
       allowProposedApi: true
     });
@@ -258,6 +220,21 @@ const TerminalInstance = ({ id, active, onData, settings = {} }) => {
       if (terminalRef.current) terminalRef.current.removeEventListener('contextmenu', handleRightClick);
     };
   }, []);
+
+  useEffect(() => {
+    if (!termInstance.current) return;
+    const term = termInstance.current;
+    term.options.theme = getIdeTheme(settings.ideTheme).terminal;
+    term.options.fontFamily = settings.terminalFontFamily || "'Fira Code', Consolas, 'Courier New', monospace";
+    term.options.fontSize = settings.terminalFontSize || 14;
+    term.options.cursorBlink = settings.terminalCursorBlinking !== false;
+    term.options.cursorStyle = settings.terminalCursorStyle || 'block';
+    term.options.cursorWidth = settings.terminalCursorWidth || 2;
+    term.options.lineHeight = settings.terminalLineHeight || 1.2;
+    term.options.scrollback = settings.terminalScrollback || 1000;
+    term.options.rendererType = settings.terminalRendererType || 'canvas';
+    safeFit();
+  }, [settings]);
 
   // Re-fit when tab becomes active
   useEffect(() => {
@@ -326,10 +303,14 @@ const AITerminalInstance = ({ id, active, data, socket, activeCommandId }) => {
     term.writeln('\x1b[90m' + '\u2500'.repeat(60) + '\x1b[0m');
     term.writeln('');
 
-    // User input handler — send to backend command stdin
+    // User input handler — send directly to Electron PTY or fallback to socket
     const disposable = term.onData((inputData) => {
-      if (socket && activeCommandId) {
-        socket.emit('terminal:ai-input', { commandId: activeCommandId, data: inputData });
+      if (activeCommandId) {
+        if (window.electronAPI) {
+          window.electronAPI.writeAIPtyTerminal(activeCommandId, inputData);
+        } else if (socket) {
+          socket.emit('terminal:ai-input', { commandId: activeCommandId, data: inputData });
+        }
       }
     });
 
@@ -337,8 +318,12 @@ const AITerminalInstance = ({ id, active, data, socket, activeCommandId }) => {
     term.attachCustomKeyEventHandler((e) => {
       if (e.ctrlKey && e.code === 'KeyV' && e.type === 'keydown') {
         navigator.clipboard.readText().then(t => {
-          if (socket && activeCommandId) {
-            socket.emit('terminal:ai-input', { commandId: activeCommandId, data: t });
+          if (activeCommandId) {
+            if (window.electronAPI) {
+              window.electronAPI.writeAIPtyTerminal(activeCommandId, t);
+            } else if (socket) {
+              socket.emit('terminal:ai-input', { commandId: activeCommandId, data: t });
+            }
           }
         });
         return false;
@@ -390,9 +375,19 @@ const AITerminalInstance = ({ id, active, data, socket, activeCommandId }) => {
 // --- Main Terminal Manager ---
 export default function Terminal({ isOpen, onToggle, onMaximize, isMaximized, problems = [], outputLogs = [], onNavigateProblem, rootPath, settings = {} }) {
   const [activeTab, setActiveTab] = useState('terminal');
+  const [problemQuery, setProblemQuery] = useState('');
   const [terminals, setTerminals] = useState([]);
   const [activeTermId, setActiveTermId] = useState(null);
   const termRefs = useRef({});
+  const [processPaneWidth, setProcessPaneWidth] = useState(220);
+  const [processPaneCollapsed, setProcessPaneCollapsed] = useState(false);
+  const [isResizingProcessPane, setIsResizingProcessPane] = useState(false);
+  const processResizeRef = useRef({ startX: 0, startWidth: 220 });
+
+  // Terminal Resizer State
+  const [terminalHeight, setTerminalHeight] = useState(250);
+  const [isResizingTerminal, setIsResizingTerminal] = useState(false);
+  const terminalResizeRef = useRef({ startY: 0, startHeight: 250 });
 
   // AI Terminal state
   const [aiTerminals, setAiTerminals] = useState([]);
@@ -400,6 +395,22 @@ export default function Terminal({ isOpen, onToggle, onMaximize, isMaximized, pr
   const [activeAiCommandId, setActiveAiCommandId] = useState(null);
   const aiSocketRef = useRef(null);
   const aiTerminalCountRef = useRef(0);
+
+  const startProcessResize = (e) => {
+    if (processPaneCollapsed) return;
+    setIsResizingProcessPane(true);
+    processResizeRef.current = { startX: e.clientX, startWidth: processPaneWidth };
+    e.preventDefault();
+  };
+
+  const handleProcessSplitterDoubleClick = () => {
+    if (processPaneCollapsed) {
+      setProcessPaneCollapsed(false);
+      setProcessPaneWidth(220);
+      return;
+    }
+    setProcessPaneWidth((prev) => (prev > 220 ? 180 : 300));
+  };
 
   // 🔥 DETECT URL & SHOW BUTTON
   const checkForUrl = (text) => {
@@ -484,7 +495,15 @@ export default function Terminal({ isOpen, onToggle, onMaximize, isMaximized, pr
 
   // AI Terminal Socket - Listen for AI command executions from backend
   useEffect(() => {
-    const socket = socketIO('http://localhost:3001');
+    const socket = socketIO('http://localhost:3001', {
+      transports: ['websocket'],
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 500,
+      reconnectionDelayMax: 2500,
+      timeout: 20000,
+      query: { client: 'terminal-ai' },
+    });
     aiSocketRef.current = socket;
 
     socket.on('terminal:ai-output', (data) => {
@@ -550,6 +569,66 @@ export default function Terminal({ isOpen, onToggle, onMaximize, isMaximized, pr
     return () => window.removeEventListener('devstudio:run-command', handleRunCommand);
   }, [activeTermId, terminals]);
 
+  // Listen for "open-ai-terminal" event from AI Activity Panel
+  useEffect(() => {
+    const handleOpenAiTerminal = () => {
+      if (!isOpen && onToggle) onToggle();
+      setActiveTab('terminal');
+      if (aiTerminals.length > 0) {
+        setActiveTermId(aiTerminals[aiTerminals.length - 1].id);
+      }
+    };
+    window.addEventListener('open-ai-terminal', handleOpenAiTerminal);
+    return () => window.removeEventListener('open-ai-terminal', handleOpenAiTerminal);
+  }, [isOpen, onToggle, aiTerminals]);
+
+  useEffect(() => {
+    if (!isResizingProcessPane) return;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+
+    const onMove = (e) => {
+      const delta = processResizeRef.current.startX - e.clientX;
+      const next = Math.min(420, Math.max(160, processResizeRef.current.startWidth + delta));
+      setProcessPaneWidth(next);
+    };
+
+    const onUp = () => setIsResizingProcessPane(false);
+
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+  }, [isResizingProcessPane]);
+
+  // Terminal Resizer Effect
+  useEffect(() => {
+    if (!isResizingTerminal) return;
+    document.body.style.cursor = 'row-resize';
+    document.body.style.userSelect = 'none';
+
+    const onMove = (e) => {
+      const delta = terminalResizeRef.current.startY - e.clientY;
+      const next = Math.min(window.innerHeight * 0.8, Math.max(100, terminalResizeRef.current.startHeight + delta));
+      setTerminalHeight(next);
+    };
+
+    const onUp = () => setIsResizingTerminal(false);
+
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+  }, [isResizingTerminal]);
+
   // Add Terminal (Accepts optional path)
   const addTerminal = async (cwd = null) => {
     if (!window.electronAPI) return;
@@ -582,31 +661,87 @@ export default function Terminal({ isOpen, onToggle, onMaximize, isMaximized, pr
   if (!isOpen) return null;
 
   return (
-    <div className={cn("bg-[#1e1e1e] flex flex-col border-t border-[#3c3c3c] transition-all duration-200", isMaximized ? "absolute inset-0 z-50 h-full" : "h-52")}>
+    <div
+      className={cn(
+        "bg-[#1e1e1e] flex flex-col border-[#3c3c3c] relative",
+        isMaximized ? "h-[72vh] shadow-[0_-8px_24px_rgba(0,0,0,0.35)]" : "border-t"
+      )}
+      style={!isMaximized ? { height: `${terminalHeight}px` } : {}}
+    >
+      {/* Top Drag Handle for Resizing */}
+      {!isMaximized && (
+        <div
+          className="absolute top-0 left-0 right-0 h-[8px] cursor-row-resize z-50 hover:bg-[#007acc] opacity-0 hover:opacity-100 transition-opacity translate-y-[-50%]"
+          onMouseDown={(e) => {
+            setIsResizingTerminal(true);
+            terminalResizeRef.current = { startY: e.clientY, startHeight: terminalHeight };
+            e.preventDefault();
+          }}
+        />
+      )}
 
       {/* Header */}
-      <div className="h-9 bg-[#252526] flex items-center justify-between px-2 border-b border-[#3c3c3c] flex-shrink-0 min-w-0">
-        <div className="flex gap-2 text-[11px] uppercase tracking-wide font-medium pl-2 overflow-x-auto flex-1 min-w-0 scrollbar-hide">
-          {['PROBLEMS', 'OUTPUT', 'DEBUG CONSOLE', 'TERMINAL'].map(tab => {
+      <div
+        className="h-9 bg-[#252526] flex items-center justify-between px-2 border-b border-[#3c3c3c] flex-shrink-0 min-w-0"
+        style={{ fontFamily: '"Segoe UI", Inter, sans-serif' }}
+      >
+        <div className="flex gap-0.5 text-[11px] font-medium pl-2 overflow-x-auto flex-1 min-w-0 scrollbar-hide">
+          {['PROBLEMS', 'OUTPUT', 'DEBUG CONSOLE', 'TERMINAL', 'PORTS'].map(tab => {
             const key = tab.split(' ')[0].toLowerCase();
             return (
               <button
                 key={key}
                 onClick={() => setActiveTab(key)}
                 className={cn(
-                  "px-2 py-1 rounded-t-md transition-all flex items-center gap-1 text-[10px] border-b-2 whitespace-nowrap flex-shrink-0",
+                  "h-8 px-2.5 transition-colors flex items-center gap-1.5 text-[11px] border-b-2 whitespace-nowrap flex-shrink-0",
                   activeTab === key
-                    ? "glass-button !bg-white/10 !border-b-[#007acc] !border-t-white/10 !border-x-white/10 text-white shadow-[0_-2px_10px_rgba(0,122,204,0.2)]"
-                    : "text-[#858585] border-transparent hover:text-[#cccccc] hover:bg-white/5"
+                    ? "border-b-[#0e639c] text-[#ffffff] bg-[#1f1f1f]"
+                    : "text-[#9d9d9d] border-b-transparent hover:text-[#d4d4d4] hover:bg-[#2c2c2c]"
                 )}
               >
-                {key === 'problems' && problems.length > 0 && <span className="bg-[#f14c4c] text-white rounded-full w-4 h-4 flex items-center justify-center text-[9px]">{problems.length}</span>}
-                {tab}
+                {key === 'problems' ? (
+                  <>
+                    <span>Problems</span>
+                    {problems.length > 0 && <span className="bg-[#0e639c] text-white rounded-full w-4 h-4 flex items-center justify-center text-[9px]">{problems.length}</span>}
+                  </>
+                ) : (
+                  tab.charAt(0) + tab.slice(1).toLowerCase()
+                )}
               </button>
             );
           })}
         </div>
         <div className="flex items-center gap-2">
+          {activeTab === 'problems' && (
+            <>
+              <div className="relative">
+                <input
+                  value={problemQuery}
+                  onChange={(e) => setProblemQuery(e.target.value)}
+                  placeholder="Filter (e.g. text, **/*.ts, !**/node_modules)"
+                  className="h-7 w-[260px] px-2 pr-8 text-[12px] bg-[#1e1e1e] border border-[#3a3a3a] rounded text-[#d4d4d4] outline-none focus:border-[#0e639c]"
+                />
+                <Filter size={14} className="absolute right-2 top-1/2 -translate-y-1/2 text-[#9d9d9d]" />
+              </div>
+              <button
+                onClick={() => navigator.clipboard.writeText(problems.map((p) => `${p.file}:${p.line} - ${p.message}`).join('\n')).then(() => toast.success('Copied problems'))}
+                className="text-[#cccccc] hover:bg-[#3c3c3c] p-1 rounded"
+                title="Copy"
+              >
+                <Copy size={14} />
+              </button>
+              <button className="text-[#cccccc] hover:bg-[#3c3c3c] p-1 rounded" title="Toggle View">
+                <List size={14} />
+              </button>
+            </>
+          )}
+          <button
+            onClick={() => setProcessPaneCollapsed((p) => !p)}
+            className="text-[#cccccc] hover:bg-[#3c3c3c] p-1 rounded"
+            title={processPaneCollapsed ? 'Show Processes' : 'Hide Processes'}
+          >
+            <Monitor size={14} />
+          </button>
           <button onClick={onMaximize} className="text-[#cccccc] hover:bg-[#3c3c3c] p-1 rounded">
             {isMaximized ? <ChevronUp className="rotate-180" size={14} /> : <ChevronUp size={14} />}
           </button>
@@ -616,12 +751,13 @@ export default function Terminal({ isOpen, onToggle, onMaximize, isMaximized, pr
 
       {/* Body */}
       <div className="flex-1 flex overflow-hidden relative bg-[#1e1e1e]">
-        {activeTab === 'problems' && <ProblemsTab problems={problems} onNavigate={onNavigateProblem} />}
+        {activeTab === 'problems' && <ProblemsTab problems={problems} onNavigate={onNavigateProblem} query={problemQuery} />}
         {activeTab === 'output' && <div className="h-full overflow-y-auto p-4 pb-8 text-[#cccccc] text-xs font-mono">Output logs will appear here.</div>}
         {activeTab === 'debug' && <div className="h-full overflow-y-auto p-4 pb-8 text-[#cccccc] text-xs font-mono">Debug console ready.</div>}
+        {activeTab === 'ports' && <div className="h-full overflow-y-auto p-4 pb-8 text-[#cccccc] text-xs">No open ports.</div>}
 
         <div className={cn("flex-1 flex overflow-hidden", activeTab === 'terminal' ? "flex" : "hidden")}>
-          <div className="flex-1 overflow-hidden relative">
+          <div className="flex-1 overflow-hidden relative min-w-0">
             {terminals.length === 0 && aiTerminals.length === 0 ? <div className="flex items-center justify-center h-full text-[#555]">No open terminals</div> :
               <>
                 {terminals.map(t => <TerminalInstance key={t.id} id={t.id} active={t.id === activeTermId} onData={(id, i) => termRefs.current[id] = i} settings={settings} />)}
@@ -629,7 +765,23 @@ export default function Terminal({ isOpen, onToggle, onMaximize, isMaximized, pr
               </>
             }
           </div>
-          <div className="w-36 bg-[#252526] border-l border-[#3c3c3c] flex flex-col">
+          {!processPaneCollapsed && (
+            <div
+              onMouseDown={startProcessResize}
+              onDoubleClick={handleProcessSplitterDoubleClick}
+              className="w-2.5 cursor-col-resize bg-transparent hover:bg-[#0e639c]/60 transition-colors relative"
+              title="Drag to resize. Double-click to toggle width."
+            >
+              <div className="absolute inset-y-0 left-1/2 -translate-x-1/2 w-px bg-[#343434]" />
+            </div>
+          )}
+          <div
+            className={cn(
+              "bg-[#252526] border-l border-[#3c3c3c] flex flex-col transition-all duration-150",
+              processPaneCollapsed && "w-0 border-l-0 overflow-hidden"
+            )}
+            style={processPaneCollapsed ? undefined : { width: `${processPaneWidth}px` }}
+          >
             <div className="flex items-center justify-between p-2 text-[10px] text-[#cccccc] font-medium bg-[#2d2d2d]">
               <span>PROCESSES</span>
               <button onClick={() => addTerminal()} className="hover:bg-[#3c3c3c] p-1 rounded"><Plus size={12} /></button>

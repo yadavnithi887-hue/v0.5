@@ -332,9 +332,24 @@ const toolSchemas = [
             },
             required: ["CommandId"]
         }
+    },
+
+    // ==================== Diagnostics Tools ====================
+    {
+        name: "check_problems",
+        description: "Check the IDE's Problems panel for real-time errors and warnings in workspace files. Returns all current diagnostics (syntax errors, type errors, CSS issues, etc.) detected by Monaco Editor's language services. CRITICAL: You MUST call this tool AFTER making ANY code changes (write_to_file, replace_file_content, multi_replace_file_content) to verify no errors were introduced. If errors are found, fix them and call check_problems again until the result shows 0 errors. Never deliver code with unresolved errors.",
+        parameters: {
+            type: "object",
+            properties: {
+                FilePaths: {
+                    type: "array",
+                    items: { type: "string" },
+                    description: "Optional. Filter results to only these file paths. If empty or omitted, returns ALL workspace problems."
+                }
+            }
+        }
     }
 ];
-
 /**
  * Get tool schemas formatted for Gemini API
  */
@@ -342,6 +357,20 @@ export function getToolDeclarations() {
     return [{
         functionDeclarations: toolSchemas
     }];
+}
+
+/**
+ * Get tool schemas formatted for OpenAI-compatible chat completions APIs.
+ */
+export function getOpenAITools() {
+    return toolSchemas.map((schema) => ({
+        type: 'function',
+        function: {
+            name: schema.name,
+            description: schema.description,
+            parameters: schema.parameters || { type: 'object', properties: {} },
+        },
+    }));
 }
 
 /**

@@ -2,5 +2,7 @@
     "css.validate": false,
     "scss.validate": false,
     "less.validate": false,
-    "css.lint.unknownAtRules": "ignore"
+    "css.lint.unknownAtRules": "ignore",
+    "editor.formatOnPaste": true,
+    "diffEditor.codeLens": true
 }
